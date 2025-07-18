@@ -123,7 +123,8 @@ export class JiraIntegrationService {
     
     return {
       id: jiraEpic.key,
-      title: jiraEpic.summary,
+      jiraId: jiraEpic.key, // Store the Jira ticket key
+      title: jiraEpic.summary, // Use the actual epic summary/title from Jira
       description: jiraEpic.description || '',
       estimateStoryPoints: 8, // Default estimate for epics
       requiredCompletionDate: requiredCompletionDate,
@@ -132,6 +133,36 @@ export class JiraIntegrationService {
       status: statusMapping[jiraEpic.status?.name] || 'Not Started',
       assignedSprints: [] // Initially empty
     };
+  }
+
+  // Import a single Jira ticket as work item
+  async importSingleTicket(ticketKey: string): Promise<WorkItem> {
+    try {
+      console.log(`🎫 Importing single Jira ticket: ${ticketKey}`);
+      console.log(`📡 Making POST request to: /api/jira/ticket`);
+      
+      const response = await fetch('/api/jira/ticket', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketKey: ticketKey.trim() })
+      });
+      
+      console.log(`📡 Response status: ${response.status} ${response.statusText}`);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ API Error: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`Failed to import ticket: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      
+      const workItem: WorkItem = await response.json();
+      console.log(`✅ Successfully imported ticket ${ticketKey} as work item`);
+      
+      return workItem;
+    } catch (error) {
+      console.error('❌ Error importing single ticket from Jira:', error);
+      throw error;
+    }
   }
 
   // Import both team members and epics

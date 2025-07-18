@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Disable strict linting for Docker builds */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    /* Keep other important checks */
+    "strict": true,
+    "noFallthroughCasesInSwitch": true
+  }
+} 

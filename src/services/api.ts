@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = '/api';
 
 // API Response wrapper type
 interface ApiResponse<T> {
@@ -199,12 +199,22 @@ export const transformers = {
     requiredSkills: item.requiredSkills,
     dependencies: item.dependencies,
     status: item.status,
+    jiraId: item.jiraId,
+    jiraStatus: item.jiraStatus,
+    assignedSprints: item.assignedSprints,
+    epicId: item.epicId,
+    // Epic work item specific properties
+    isEpic: item.isEpic,
+    children: item.children
   }),
   
   // Convert backend work item to frontend format
   workItemFromApi: (item: any) => ({
     ...item,
     requiredCompletionDate: new Date(item.requiredCompletionDate),
+    // Ensure epic properties are preserved
+    children: item.children || undefined,
+    isEpic: item.isEpic || false
   }),
   
   // Convert frontend sprint to backend format

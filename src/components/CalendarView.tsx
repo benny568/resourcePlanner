@@ -87,11 +87,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
               ))}
               
               {/* Work items due */}
-              {workItemsForDay.map(item => (
-                <div key={item.id} className="text-xs bg-green-100 text-green-800 px-1 mb-1 rounded">
-                  📋 {item.title.substring(0, 15)}...
-                </div>
-              ))}
+              {workItemsForDay.map(item => {
+                const displayTitle = item.jiraId ? `${item.jiraId} ${item.title}` : item.title;
+                const statusIcon = item.status === 'Completed' ? '✅' : 
+                                 item.status === 'In Progress' ? '🔄' : '⏸️';
+                const bgColor = item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                               item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                               'bg-gray-100 text-gray-800';
+                return (
+                  <div key={item.id} className={`text-xs px-1 mb-1 rounded ${bgColor}`}>
+                    {statusIcon} {item.jiraId ? (
+                      <>
+                        <a 
+                          href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {item.jiraId}
+                        </a>
+                        <span className="ml-1">{item.title.substring(0, 12)}...</span>
+                      </>
+                    ) : (
+                      displayTitle.substring(0, 20) + '...'
+                    )}
+                  </div>
+                );
+              })}
             </div>
           );
         })}
@@ -147,7 +170,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
                 ) : (
                   workItemsAssigned.map(item => (
                     <div key={item.id} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm">
-                      <span>{item.title}</span>
+                      <span>
+                        {item.jiraId ? (
+                          <>
+                            <a 
+                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {item.jiraId}
+                            </a>
+                            <span className="ml-1">{item.title}</span>
+                          </>
+                        ) : (
+                          item.title
+                        )}
+                      </span>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{item.estimateStoryPoints}pts</span>
                         <span className={`px-2 py-1 rounded-full text-xs ${
@@ -155,7 +195,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
                           item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
-                          {item.status}
+                          {item.jiraStatus || item.status}
                         </span>
                       </div>
                     </div>
@@ -265,10 +305,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
           <div className="space-y-2">
             {overdueItems.map(item => (
               <div key={item.id} className="flex justify-between items-center text-sm">
-                <span>{item.title}</span>
+                <span>
+                  {item.jiraId ? (
+                    <>
+                      <a 
+                        href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {item.jiraId}
+                      </a>
+                      <span className="ml-1">{item.title}</span>
+                    </>
+                  ) : (
+                    item.title
+                  )}
+                </span>
                 <div className="flex items-center gap-2 text-red-600">
                   <span>Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}</span>
                   <span className="font-medium">{item.estimateStoryPoints}pts</span>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {item.jiraStatus || item.status}
+                  </span>
                 </div>
               </div>
             ))}

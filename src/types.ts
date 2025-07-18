@@ -18,6 +18,7 @@ export interface PersonalHoliday {
 
 export interface WorkItem {
   id: string;
+  jiraId?: string; // Optional Jira ticket ID (e.g., REF-1234)
   title: string;
   description: string;
   estimateStoryPoints: number;
@@ -25,7 +26,24 @@ export interface WorkItem {
   requiredSkills: Skill[]; // skills needed to work on this item
   dependencies: string[]; // IDs of work items that must be completed first
   status: 'Not Started' | 'In Progress' | 'Completed';
+  jiraStatus?: string; // Original Jira status (e.g., "Ready for Testing", "In Review", etc.)
   assignedSprints: string[];
+  epicId?: string; // Optional Epic ID if this work item belongs to an epic
+  // Epic work item properties
+  isEpic?: boolean; // True if this work item is actually an epic
+  children?: WorkItem[]; // Child work items (only for epic work items)
+}
+
+export interface Epic {
+  id: string;
+  jiraId: string; // Jira epic key (e.g., REF-1234)
+  title: string;
+  description: string;
+  status: 'Not Started' | 'In Progress' | 'Completed';
+  jiraStatus?: string; // Original Jira status
+  children: WorkItem[]; // Child tickets/stories of this epic
+  totalStoryPoints: number; // Sum of all children story points
+  completedStoryPoints: number; // Sum of completed children story points
 }
 
 export interface Sprint {
@@ -54,6 +72,7 @@ export interface SprintConfig {
 export interface ResourcePlanningData {
   teamMembers: TeamMember[];
   workItems: WorkItem[];
+  epics: Epic[];
   sprints: Sprint[];
   publicHolidays: PublicHoliday[];
   sprintConfig: SprintConfig;

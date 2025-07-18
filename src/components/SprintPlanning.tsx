@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems } from '../utils/dateUtils';
 
@@ -17,6 +17,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 }) => {
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+
+  // Toggle epic expansion
+  const toggleEpicExpansion = (epicId: string) => {
+    const newExpanded = new Set(expandedEpics);
+    if (newExpanded.has(epicId)) {
+      newExpanded.delete(epicId);
+    } else {
+      newExpanded.add(epicId);
+    }
+    setExpandedEpics(newExpanded);
+  };
 
   // Get unassigned work items
   const unassignedItems = data.workItems.filter(item => 
@@ -27,6 +39,39 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const blockedItems = getBlockedWorkItems(unassignedItems, data.workItems);
   const readyItems = unassignedItems.filter(item => !blockedItems.includes(item));
 
+  // Get unassigned epic work items (work items with isEpic: true)
+  const unassignedEpicWorkItems = data.workItems.filter(item => 
+    item.isEpic && 
+    item.assignedSprints.length === 0 && 
+    item.status !== 'Completed' &&
+    item.children && item.children.length > 0 // Show epics that have any children
+  );
+
+  // Debug logging for epic work items
+  React.useEffect(() => {
+    console.log('🔍 Sprint Planning Epic Debug:');
+    console.log('📊 All work items:', data.workItems.length);
+    const epicWorkItems = data.workItems.filter(item => item.isEpic);
+    console.log('📊 Work items with isEpic=true:', epicWorkItems);
+    console.log('📊 Unassigned epic work items:', unassignedEpicWorkItems);
+    
+    // Check REF-2794 specifically
+    const ref2794 = data.workItems.find(item => item.jiraId === 'REF-2794');
+    if (ref2794) {
+      console.log('📋 REF-2794 details:', {
+        id: ref2794.id,
+        jiraId: ref2794.jiraId,
+        isEpic: ref2794.isEpic,
+        hasChildren: !!ref2794.children,
+        childrenCount: ref2794.children?.length || 0,
+        children: ref2794.children,
+        assignedSprints: ref2794.assignedSprints,
+        status: ref2794.status,
+        estimateStoryPoints: ref2794.estimateStoryPoints
+      });
+    }
+  }, [data.workItems, unassignedEpicWorkItems]);
+
   // Get upcoming sprints (not in the past)
   const upcomingSprints = data.sprints.filter(sprint => 
     !isBefore(sprint.endDate, new Date())
@@ -35,18 +80,41 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Calculate sprint data with capacity and assignments
   const sprintData = useMemo(() => {
     return upcomingSprints.map(sprint => {
+      // Get assigned top-level work items
       const assignedItems = data.workItems.filter(item => 
         item.assignedSprints.includes(sprint.id)
       );
-      const assignedPoints = assignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+      
+      // Get assigned epic children
+      const assignedEpicChildren: WorkItem[] = [];
+      data.workItems.filter(item => item.isEpic && item.children).forEach(epic => {
+        epic.children!.forEach(child => {
+          if (child.assignedSprints.includes(sprint.id)) {
+            assignedEpicChildren.push(child);
+          }
+        });
+      });
+      
+      // Also check Epic objects from Jira imports
+      data.epics.forEach(epic => {
+        epic.children.forEach(child => {
+          if (child.assignedSprints.includes(sprint.id)) {
+            assignedEpicChildren.push(child);
+          }
+        });
+      });
+      
+      // Combine all assigned items
+      const allAssignedItems = [...assignedItems, ...assignedEpicChildren];
+      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
       
       // Calculate skill-specific capacities
       const skillCapacities = calculateSprintSkillCapacities(sprint, data.teamMembers, data.publicHolidays);
       const capacity = skillCapacities.total;
       
       // Calculate skill-specific assignments
-      const frontendItems = assignedItems.filter(item => item.requiredSkills.includes('frontend'));
-      const backendItems = assignedItems.filter(item => item.requiredSkills.includes('backend'));
+      const frontendItems = allAssignedItems.filter(item => item.requiredSkills.includes('frontend'));
+      const backendItems = allAssignedItems.filter(item => item.requiredSkills.includes('backend'));
       const frontendPoints = frontendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
       const backendPoints = backendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
       
@@ -56,7 +124,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       
       return {
         sprint,
-        assignedItems,
+        assignedItems: allAssignedItems,
         assignedPoints,
         capacity,
         utilization,
@@ -188,7 +256,36 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
   // Assign item to sprint
   const assignItemToSprint = (itemId: string, sprintId: string) => {
-    const workItem = data.workItems.find(item => item.id === itemId);
+    // First, try to find the item in main work items array
+    let workItem = data.workItems.find(item => item.id === itemId);
+    
+    // If not found, search within epic children
+    if (!workItem) {
+      for (const epic of data.workItems.filter(item => item.isEpic)) {
+        const child = epic.children?.find(child => child.id === itemId);
+        if (child) {
+          workItem = child;
+          break;
+        }
+      }
+      
+      // Also search in regular Epic objects
+      if (!workItem) {
+        for (const epic of data.epics) {
+          const child = epic.children.find(child => child.id === itemId);
+          if (child) {
+            workItem = child;
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!workItem) {
+      console.error(`Work item ${itemId} not found`);
+      return;
+    }
+    
     const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
     
     // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
@@ -217,6 +314,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     }
 
     const updatedWorkItems = data.workItems.map(item => {
+      // Handle regular work items
       if (item.id === itemId) {
         return {
           ...item,
@@ -225,6 +323,26 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             : [...item.assignedSprints, sprintId]
         };
       }
+      
+      // Handle epic work items - update children
+      if (item.isEpic && item.children) {
+        const childIndex = item.children.findIndex(child => child.id === itemId);
+        if (childIndex !== -1) {
+          const updatedChildren = [...item.children];
+          updatedChildren[childIndex] = {
+            ...updatedChildren[childIndex],
+            assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
+              ? updatedChildren[childIndex].assignedSprints
+              : [...updatedChildren[childIndex].assignedSprints, sprintId]
+          };
+          
+          return {
+            ...item,
+            children: updatedChildren
+          };
+        }
+      }
+      
       return item;
     });
 
@@ -245,12 +363,31 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Remove item from sprint
   const removeItemFromSprint = (itemId: string, sprintId: string) => {
     const updatedWorkItems = data.workItems.map(item => {
+      // Handle regular work items
       if (item.id === itemId) {
         return {
           ...item,
           assignedSprints: item.assignedSprints.filter(id => id !== sprintId)
         };
       }
+      
+      // Handle epic work items - update children
+      if (item.isEpic && item.children) {
+        const childIndex = item.children.findIndex(child => child.id === itemId);
+        if (childIndex !== -1) {
+          const updatedChildren = [...item.children];
+          updatedChildren[childIndex] = {
+            ...updatedChildren[childIndex],
+            assignedSprints: updatedChildren[childIndex].assignedSprints.filter(id => id !== sprintId)
+          };
+          
+          return {
+            ...item,
+            children: updatedChildren
+          };
+        }
+      }
+      
       return item;
     });
 
@@ -468,6 +605,109 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Epic Work Items */}
+              {unassignedEpicWorkItems.length > 0 && (
+                <div>
+                  <h4 className="text-md font-medium text-indigo-700 mb-2 flex items-center gap-2">
+                    <ChevronDown className="h-4 w-4" />
+                    Epic Work Items ({unassignedEpicWorkItems.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {unassignedEpicWorkItems.map(epic => (
+                      <div key={epic.id} className="border rounded-lg bg-indigo-50 border-indigo-200">
+                        {/* Epic Header */}
+                        <div 
+                          className="p-3 cursor-pointer flex items-center gap-2"
+                          onClick={() => toggleEpicExpansion(epic.id)}
+                        >
+                          {expandedEpics.has(epic.id) ? (
+                            <ChevronDown className="h-4 w-4 text-indigo-600" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-indigo-600" />
+                          )}
+                          <div className="flex-1">
+                            <div className="font-medium text-sm text-indigo-800">{epic.title}</div>
+                            <div className="text-xs text-indigo-600">
+                              {epic.children?.length || 0} children • {epic.jiraId}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Epic Children (when expanded) */}
+                        {expandedEpics.has(epic.id) && epic.children && (
+                          <div className="px-6 pb-3 space-y-2">
+                            {epic.children.map(child => {
+                              const isCompleted = child.status === 'Completed';
+                              const isAssigned = child.assignedSprints.length > 0;
+                              const isDraggable = !isCompleted && !isAssigned;
+
+                              return (
+                                <div
+                                  key={child.id}
+                                  draggable={isDraggable}
+                                  onDragStart={isDraggable ? (e) => handleDragStart(e, child.id) : undefined}
+                                  className={`p-2 border rounded text-xs ${
+                                    isCompleted 
+                                      ? 'bg-green-50 border-green-200 text-green-700' 
+                                      : isAssigned 
+                                        ? 'bg-blue-50 border-blue-200 text-blue-700'
+                                        : 'bg-white border-gray-200 cursor-move hover:shadow-md transition-shadow'
+                                  }`}
+                                >
+                                  <div className="font-medium">{child.title}</div>
+                                  <div className="flex justify-between items-center mt-1">
+                                    <div className="flex items-center gap-2">
+                                      <span>{child.estimateStoryPoints} pts</span>
+                                      <div className="flex gap-1">
+                                        {child.requiredSkills.map(skill => (
+                                          <span 
+                                            key={skill}
+                                            className={`px-1 py-0.5 rounded text-xs font-medium ${
+                                              skill === 'frontend' 
+                                                ? 'bg-purple-100 text-purple-800' 
+                                                : 'bg-orange-100 text-orange-800'
+                                            }`}
+                                          >
+                                            {skill === 'frontend' ? 'FE' : 'BE'}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {isCompleted && <span className="text-green-600 font-medium">✓ DONE</span>}
+                                      {isAssigned && !isCompleted && <span className="text-blue-600 font-medium">📅 ASSIGNED</span>}
+                                      {child.jiraStatus && (
+                                        <span className="text-gray-600 text-xs bg-gray-100 px-2 py-1 rounded">
+                                          {child.jiraStatus}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className={`font-medium ${
+                                      !isCompleted && isBefore(child.requiredCompletionDate, new Date()) ? 'text-red-600' : ''
+                                    }`}>
+                                      Due: {format(child.requiredCompletionDate, 'MMM dd')}
+                                    </span>
+                                  </div>
+                                  {!isDraggable && (
+                                    <div className="text-xs text-gray-500 mt-1">
+                                      {isCompleted ? 'Cannot assign completed items' : 'Already assigned to a sprint'}
+                                    </div>
+                                  )}
+                                  {!isCompleted && isBefore(child.requiredCompletionDate, new Date()) && (
+                                    <div className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                                      <AlertTriangle className="h-3 w-3" />
+                                      Overdue
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -481,8 +721,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             assignedItems, 
             assignedPoints, 
             capacity, 
-            utilization, 
-            availableCapacity,
+            utilization,
             skillCapacities,
             frontendPoints,
             backendPoints,

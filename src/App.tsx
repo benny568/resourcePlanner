@@ -2,18 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { TeamManagement } from './components/TeamManagement';
 import { WorkItemManagement } from './components/WorkItemManagement';
+import { EpicsManagement } from './components/EpicsManagement';
 import { SprintPlanning } from './components/SprintPlanning';
 import { HolidayManagement } from './components/HolidayManagement';
 import { SprintConfiguration } from './components/SprintConfiguration';
 import { JiraImport } from './components/JiraImport';
 import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3 } from 'lucide-react';
-import { TeamMember, WorkItem, Sprint, PublicHoliday, SprintConfig } from './types';
+import { TeamMember, WorkItem, Epic, Sprint, PublicHoliday, SprintConfig } from './types';
 import { generateSprintsForYear } from './utils/dateUtils';
 import { teamMembersApi, workItemsApi, sprintsApi, holidaysApi, sprintConfigApi, transformers } from './services/api';
 
 interface AppData {
   teamMembers: TeamMember[];
   workItems: WorkItem[];
+  epics: Epic[];
   sprints: Sprint[];
   publicHolidays: PublicHoliday[];
   sprintConfig: SprintConfig;
@@ -24,6 +26,7 @@ function App() {
   const [data, setData] = useState<AppData>({
     teamMembers: [],
     workItems: [],
+    epics: [],
     sprints: [],
     publicHolidays: [],
     sprintConfig: {
@@ -38,7 +41,7 @@ function App() {
   // Check API connection
   const checkApiConnection = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/health');
+      const response = await fetch('/api/health');
       setIsApiConnected(response.ok);
       return response.ok;
     } catch (error) {
@@ -66,6 +69,7 @@ function App() {
         setData({
           teamMembers: teamMembers.map(transformers.teamMemberFromApi),
           workItems: workItems.map(transformers.workItemFromApi),
+          epics: [], // TODO: Load epics from API
           sprints: sprints.map(transformers.sprintFromApi),
           publicHolidays: holidays.map(transformers.holidayFromApi),
           sprintConfig: transformers.sprintConfigFromApi(sprintConfig)
@@ -134,6 +138,10 @@ function App() {
 
   const updateWorkItems = async (workItems: WorkItem[]) => {
     setData(prev => ({ ...prev, workItems }));
+  };
+
+  const updateEpics = async (epics: Epic[]) => {
+    setData(prev => ({ ...prev, epics }));
   };
 
   const updateSprints = async (sprints: any[]) => {
@@ -248,20 +256,31 @@ function App() {
   };
 
   // Handle Jira import completion
-  const handleJiraImport = async (importedData: { teamMembers: TeamMember[]; workItems: WorkItem[] }) => {
+  const handleJiraImport = async (importedData: { teamMembers: TeamMember[]; workItems: WorkItem[]; epics?: Epic[] }) => {
     try {
       console.log('🔄 Processing Jira import data...');
-      console.log(`📊 Importing: ${importedData.teamMembers.length} team members, ${importedData.workItems.length} work items`);
+      console.log(`📊 Importing: ${importedData.teamMembers.length} team members, ${importedData.workItems.length} work items, ${importedData.epics?.length || 0} epics`);
       
       // Check for duplicate team members by name (since Jira IDs are different format)
       const existingTeamMemberNames = new Set(data.teamMembers.map(tm => tm.name.toLowerCase()));
       const newTeamMembers = importedData.teamMembers.filter(tm => !existingTeamMemberNames.has(tm.name.toLowerCase()));
       const duplicateTeamMembers = importedData.teamMembers.filter(tm => existingTeamMemberNames.has(tm.name.toLowerCase()));
       
-      // Check for duplicate work items by title
+      // Check for duplicate work items by Jira ID or title
+      const existingJiraIds = new Set(data.workItems.map(wi => wi.jiraId).filter(Boolean));
       const existingWorkItemTitles = new Set(data.workItems.map(wi => wi.title.toLowerCase()));
-      const newWorkItems = importedData.workItems.filter(wi => !existingWorkItemTitles.has(wi.title.toLowerCase()));
-      const duplicateWorkItems = importedData.workItems.filter(wi => existingWorkItemTitles.has(wi.title.toLowerCase()));
+      
+      const newWorkItems = importedData.workItems.filter(wi => 
+        !wi.jiraId || (!existingJiraIds.has(wi.jiraId) && !existingWorkItemTitles.has(wi.title.toLowerCase()))
+      );
+      
+      const updateWorkItems = importedData.workItems.filter(wi => 
+        wi.jiraId && existingJiraIds.has(wi.jiraId)
+      );
+      
+      const duplicateWorkItems = importedData.workItems.filter(wi => 
+        !wi.jiraId && existingWorkItemTitles.has(wi.title.toLowerCase())
+      );
       
       // Log duplicate information
       if (duplicateTeamMembers.length > 0) {
@@ -269,6 +288,9 @@ function App() {
       }
       if (duplicateWorkItems.length > 0) {
         console.log(`🔄 Skipped ${duplicateWorkItems.length} duplicate work items:`, duplicateWorkItems.map(wi => wi.title));
+      }
+      if (updateWorkItems.length > 0) {
+        console.log(`🔄 Updating ${updateWorkItems.length} existing Jira tickets:`, updateWorkItems.map(wi => wi.jiraId));
       }
       
       // Save new team members to database and get back the database IDs
@@ -306,24 +328,90 @@ function App() {
          console.log('⚠️ API not connected, skipping work item database save');
        }
       
+      // Update existing work items with fresh Jira data
+      const updatedWorkItems: WorkItem[] = [];
+      if (isApiConnected) {
+        for (const updateItem of updateWorkItems) {
+          try {
+            console.log(`🔄 Updating existing work item: ${updateItem.jiraId} - ${updateItem.title}`);
+            const existingItem = data.workItems.find(wi => wi.jiraId === updateItem.jiraId);
+            if (existingItem) {
+              // Merge the existing item with updated Jira data, preserving local changes
+              const mergedItem = {
+                ...existingItem,
+                title: updateItem.title, // Update title from Jira
+                description: updateItem.description, // Update description from Jira
+                jiraStatus: updateItem.jiraStatus, // Update Jira status
+                status: updateItem.status // Update simplified status mapping
+              };
+              
+              const apiData = transformers.workItemToApi(mergedItem);
+              const savedItem = await workItemsApi.update(existingItem.id, apiData);
+              updatedWorkItems.push(transformers.workItemFromApi(savedItem));
+              console.log(`✅ Updated work item: ${updateItem.jiraId}`);
+            }
+          } catch (error) {
+            console.error(`❌ Failed to update work item ${updateItem.jiraId}:`, error);
+          }
+        }
+      }
+      
       // Merge with existing data using the saved items with database IDs
       const mergedTeamMembers = [...data.teamMembers, ...savedTeamMembers];
-      const mergedWorkItems = [...data.workItems, ...savedWorkItems];
+      
+      // Replace updated items and add new items
+      let mergedWorkItems = [...data.workItems];
+      
+      // Replace updated items
+      for (const updatedItem of updatedWorkItems) {
+        const index = mergedWorkItems.findIndex(wi => wi.id === updatedItem.id);
+        if (index !== -1) {
+          mergedWorkItems[index] = updatedItem;
+        }
+      }
+      
+      // Add new items
+      mergedWorkItems = [...mergedWorkItems, ...savedWorkItems];
+      
+      // Process epics if provided
+      let mergedEpics = [...data.epics];
+      if (importedData.epics && importedData.epics.length > 0) {
+        // Check for duplicate epics by Jira ID
+        const existingEpicJiraIds = new Set(data.epics.map(epic => epic.jiraId));
+        const newEpics = importedData.epics.filter(epic => !existingEpicJiraIds.has(epic.jiraId));
+        const duplicateEpics = importedData.epics.filter(epic => existingEpicJiraIds.has(epic.jiraId));
+        
+        console.log(`🔄 Epic processing: +${newEpics.length} new, ~${duplicateEpics.length} duplicates`);
+        
+        // Simply add new epics (no backend persistence for now)
+        mergedEpics = [...data.epics, ...newEpics];
+      }
       
       // Update local state with merged data
       setData(prev => ({ 
         ...prev, 
         teamMembers: mergedTeamMembers,
-        workItems: mergedWorkItems 
+        workItems: mergedWorkItems,
+        epics: mergedEpics
       }));
       
-      // Switch to work items tab to see imported data
-      setActiveTab('work-items');
+      // Switch to appropriate tab to see imported data
+      if (importedData.epics && importedData.epics.length > 0) {
+        setActiveTab('epics');
+      } else {
+        setActiveTab('work-items');
+      }
       
-      console.log(`✅ Jira import processed: +${savedTeamMembers.length} new team members, +${savedWorkItems.length} new work items`);
+      const epicCount = importedData.epics?.length || 0;
+      console.log(`✅ Jira import processed: +${savedTeamMembers.length} new team members, +${savedWorkItems.length} new work items, +${epicCount} epics, ~${updatedWorkItems.length} updated work items`);
       
       // Show summary alert
-      alert(`Jira Import Complete!\n\n✅ Added ${savedTeamMembers.length} new team members\n✅ Added ${savedWorkItems.length} new work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`);
+      let alertMessage = `Jira Import Complete!\n\n✅ Added ${savedTeamMembers.length} new team members\n✅ Added ${savedWorkItems.length} new work items`;
+      if (epicCount > 0) {
+        alertMessage += `\n📁 Added ${epicCount} epics with children`;
+      }
+      alertMessage += `\n🔄 Updated ${updatedWorkItems.length} existing work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`;
+      alert(alertMessage);
       
     } catch (error) {
       console.error('❌ Failed to process Jira import:', error);
@@ -335,6 +423,7 @@ function App() {
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'work-items', label: 'Work Items', icon: Briefcase },
+    { id: 'epics', label: 'Epics', icon: Briefcase },
     { id: 'sprints', label: 'Sprint Planning', icon: Calendar },
     { id: 'holidays', label: 'Holidays', icon: CalendarIcon },
     { id: 'config', label: 'Configuration', icon: Settings },
@@ -419,6 +508,16 @@ function App() {
           <WorkItemManagement
             workItems={data.workItems}
             onUpdateWorkItems={updateWorkItems}
+          />
+        )}
+        {activeTab === 'epics' && (
+          <EpicsManagement
+            epics={data.epics}
+            onUpdateEpics={updateEpics}
+            onUpdateWorkItems={(updater) => {
+              const updatedWorkItems = updater(data.workItems);
+              updateWorkItems(updatedWorkItems);
+            }}
           />
         )}
         {activeTab === 'sprints' && (

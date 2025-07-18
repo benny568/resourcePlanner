@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { WorkItem, Skill } from '../types';
-import { Plus, Trash2, Edit3, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Edit3, CheckCircle, Clock, AlertCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { workItemsApi, transformers } from '../services/api';
 
@@ -16,6 +16,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -36,6 +37,16 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
     });
     setIsAddingItem(false);
     setEditingItem(null);
+  };
+
+  const toggleEpicExpansion = (epicId: string) => {
+    const newExpanded = new Set(expandedEpics);
+    if (newExpanded.has(epicId)) {
+      newExpanded.delete(epicId);
+    } else {
+      newExpanded.add(epicId);
+    }
+    setExpandedEpics(newExpanded);
   };
 
   const handleSubmit = async () => {
@@ -97,9 +108,20 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
     if (!isLoading) {
       setIsLoading(true);
       try {
-        await workItemsApi.delete(itemId);
-        onUpdateWorkItems(workItems.filter(item => item.id !== itemId));
-        console.log('Work item deleted successfully');
+        const item = workItems.find(i => i.id === itemId);
+        
+        // Epic work items are not stored in backend, so only update local state
+        if (item?.isEpic) {
+          console.log(`🗑️ Deleting epic work item: ${itemId} (local state only)`);
+          onUpdateWorkItems(workItems.filter(item => item.id !== itemId));
+          console.log('Epic work item deleted successfully');
+        } else {
+          // Regular work items need to be deleted from backend
+          console.log(`🗑️ Deleting work item: ${itemId} (backend + local state)`);
+          await workItemsApi.delete(itemId);
+          onUpdateWorkItems(workItems.filter(item => item.id !== itemId));
+          console.log('Work item deleted successfully');
+        }
       } catch (error) {
         console.error('Error deleting work item:', error);
         alert('Failed to delete work item. Please try again.');
@@ -179,7 +201,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
     });
   };
 
-  const getStatusIcon = (status: WorkItem['status']) => {
+  const getStatusIcon = (status: string) => {
     switch (status) {
       case 'Completed':
         return <CheckCircle className="h-4 w-4 text-green-600" />;
@@ -190,14 +212,14 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
     }
   };
 
-  const getStatusColor = (status: WorkItem['status']) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case 'Completed':
-        return 'bg-green-100 text-green-800';
+        return 'text-green-600 bg-green-50';
       case 'In Progress':
-        return 'bg-blue-100 text-blue-800';
+        return 'text-blue-600 bg-blue-50';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'text-gray-600 bg-gray-50';
     }
   };
 
@@ -351,86 +373,267 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
               No work items added yet. Click "Add Work Item" to get started.
             </div>
           ) : (
-            workItems.map((item) => (
-              <div key={item.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">{item.title}</h3>
-                    {item.description && (
-                      <p className="text-gray-600 mt-1">{item.description}</p>
+            workItems.map((item) => {
+              // Handle epic work items with expandable children
+              if (item.isEpic) {
+                console.log(`🔍 Rendering epic work item: ${item.id}`, { 
+                  isEpic: item.isEpic, 
+                  hasChildren: !!item.children, 
+                  childrenCount: item.children?.length || 0 
+                });
+                
+                const isExpanded = expandedEpics.has(item.id);
+                const children = item.children || [];
+                const completedChildren = children.filter(child => child.status === 'Completed');
+                const completedPoints = completedChildren.reduce((sum, child) => sum + child.estimateStoryPoints, 0);
+                const progressPercentage = item.estimateStoryPoints > 0 
+                  ? (completedPoints / item.estimateStoryPoints) * 100 
+                  : 0;
+
+                return (
+                  <div key={item.id} className="border rounded-lg bg-gray-50">
+                    {/* Epic Header */}
+                    <div 
+                      className="p-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => toggleEpicExpansion(item.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className="flex items-center gap-2">
+                            {children.length > 0 && (
+                              <>
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4 text-gray-600" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 text-gray-600" />
+                                )}
+                              </>
+                            )}
+                            {getStatusIcon(item.jiraStatus || item.status)}
+                          </div>
+                          
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <a 
+                                href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {item.jiraId}
+                              </a>
+                              <ExternalLink className="h-3 w-3 text-gray-400" />
+                              <span className="font-medium text-gray-900">[EPIC] {item.title}</span>
+                            </div>
+                            
+                            {item.description && (
+                              <p className="text-sm text-gray-600 mb-2">{item.description}</p>
+                            )}
+                            
+                            <div className="flex items-center gap-4 text-sm text-gray-500">
+                              <span>{children.length} tickets</span>
+                              <span>{item.estimateStoryPoints} story points</span>
+                              <span>Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}</span>
+                              <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(item.jiraStatus || item.status)}`}>
+                                {item.jiraStatus || item.status}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 ml-4">
+                          {/* Progress Bar */}
+                          {children.length > 0 && (
+                            <div className="w-24">
+                              <div className="bg-gray-200 rounded-full h-2">
+                                <div 
+                                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                  style={{ width: `${progressPercentage}%` }}
+                                />
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1 text-center">
+                                {Math.round(progressPercentage)}%
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Action Buttons */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEdit(item);
+                            }}
+                            className="p-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+                            title={`Edit epic ${item.jiraId}`}
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteItem(item.id);
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                            title={`Delete epic ${item.jiraId}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Children Tickets */}
+                    {isExpanded && children.length > 0 && (
+                      <div className="border-t bg-white">
+                        <div className="p-4">
+                          <h4 className="text-sm font-medium text-gray-700 mb-3">
+                            Child Tickets ({children.length})
+                          </h4>
+                          
+                          <div className="space-y-2">
+                            {children.map((child) => (
+                              <div key={child.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded border">
+                                <div className="flex items-center gap-2">
+                                  {getStatusIcon(child.jiraStatus || child.status)}
+                                  {child.jiraId ? (
+                                    <a 
+                                      href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
+                                    >
+                                      {child.jiraId}
+                                    </a>
+                                  ) : (
+                                    <span className="text-sm font-medium text-gray-700">{child.id}</span>
+                                  )}
+                                </div>
+                                
+                                <div className="flex-1">
+                                  <span className="text-sm text-gray-900">{child.title}</span>
+                                  {child.description && (
+                                    <p className="text-xs text-gray-600 mt-1">{child.description}</p>
+                                  )}
+                                </div>
+                                
+                                <div className="flex items-center gap-3 text-xs text-gray-500">
+                                  <span>{child.estimateStoryPoints} pts</span>
+                                  <span>Due: {format(child.requiredCompletionDate, 'MMM dd')}</span>
+                                  <span className={`px-2 py-1 rounded-full ${getStatusColor(child.jiraStatus || child.status)}`}>
+                                    {child.jiraStatus || child.status}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div className="flex gap-2 ml-4">
-                    <button
-                      onClick={() => startEdit(item)}
-                      className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
-                    >
-                      <Edit3 className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="flex items-center justify-between mt-3">
-                  <div className="flex items-center gap-4 text-sm text-gray-600">
-                    <span className="font-medium">
-                      {item.estimateStoryPoints} story points
-                    </span>
-                    <span>
-                      Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium">Skills:</span>
-                      <div className="flex gap-1">
-                        {item.requiredSkills.map(skill => (
-                          <span 
-                            key={skill}
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              skill === 'frontend' 
-                                ? 'bg-purple-100 text-purple-800' 
-                                : 'bg-orange-100 text-orange-800'
-                            }`}
-                          >
-                            {skill === 'frontend' ? 'FE' : 'BE'}
-                          </span>
-                        ))}
-                      </div>
+                );
+              }
+
+              // Handle regular work items (non-epic)
+              console.log(`📄 Rendering regular work item: ${item.id}`, { isEpic: item.isEpic });
+              return (
+                <div key={item.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-lg">
+                        {item.jiraId ? (
+                          <>
+                            <a 
+                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {item.jiraId}
+                            </a>
+                            <span className="ml-1">{item.title}</span>
+                          </>
+                        ) : (
+                          item.title
+                        )}
+                      </h3>
+                      {item.description && (
+                        <p className="text-gray-600 mt-1">{item.description}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <button
+                        onClick={() => startEdit(item)}
+                        className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                   
-                  {/* Dependencies */}
-                  {item.dependencies.length > 0 && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600 mt-2">
-                      <span className="font-medium">Dependencies:</span>
-                      <div className="flex flex-wrap gap-1">
-                        {item.dependencies.map(depId => {
-                          const depItem = workItems.find(w => w.id === depId);
-                          if (!depItem) return null;
-                          return (
+                  <div className="flex items-center justify-between mt-3">
+                    <div className="flex items-center gap-4 text-sm text-gray-600">
+                      <span className="font-medium">
+                        {item.estimateStoryPoints} story points
+                      </span>
+                      <span>
+                        Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium">Skills:</span>
+                        <div className="flex gap-1">
+                          {item.requiredSkills.map(skill => (
                             <span 
-                              key={depId}
-                              className={`px-2 py-1 rounded text-xs font-medium border ${
-                                depItem.status === 'Completed' 
-                                  ? 'bg-green-100 text-green-800 border-green-200' 
-                                  : 'bg-yellow-100 text-yellow-800 border-yellow-200'
+                              key={skill}
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                skill === 'frontend' 
+                                  ? 'bg-purple-100 text-purple-800' 
+                                  : 'bg-orange-100 text-orange-800'
                               }`}
-                              title={`${depItem.title} (${depItem.status})`}
                             >
-                              {depItem.title}
-                              {depItem.status === 'Completed' ? ' ✓' : ' ⏳'}
+                              {skill === 'frontend' ? 'FE' : 'BE'}
                             </span>
-                          );
-                        })}
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {item.dependencies && item.dependencies.length > 0 && (
+                    <div className="mt-3 pt-3 border-t">
+                      <div className="text-sm">
+                        <span className="font-medium text-gray-700">Dependencies:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {item.dependencies.map(depId => {
+                            const depItem = workItems.find(wi => wi.id === depId);
+                            return (
+                              <span 
+                                key={depId}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  depItem?.status === 'Completed' 
+                                    ? 'bg-green-100 text-green-800' 
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}
+                                title={`${depItem?.title} (${depItem?.status})`}
+                              >
+                                {depItem?.title}
+                                {depItem?.status === 'Completed' ? ' ✓' : ' ⏳'}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 mt-3">
                     <select
                       value={item.status}
                       onChange={(e) => updateItemStatus(item.id, e.target.value as WorkItem['status'])}
@@ -442,12 +645,12 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                     </select>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusColor(item.status)}`}>
                       {getStatusIcon(item.status)}
-                      {item.status}
+                      {item.jiraStatus || item.status}
                     </span>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
