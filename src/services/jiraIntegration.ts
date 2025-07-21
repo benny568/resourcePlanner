@@ -39,13 +39,13 @@ export class JiraIntegrationService {
     }
   }
 
-  // Extract epics and convert them to work items
-  async extractEpics(): Promise<WorkItem[]> {
+  // Extract regular work items (NOT epics) from Jira
+  async extractWorkItems(): Promise<WorkItem[]> {
     try {
-      console.log(`🔍 Extracting epics from Jira project: ${this.projectKey}`);
-      console.log(`📡 Making POST request to: /api/jira/epics`);
+      console.log(`🔍 Extracting regular work items (non-epics) from Jira project: ${this.projectKey}`);
+      console.log(`📡 Making POST request to: /api/jira/work-items`);
       
-      const response = await fetch('/api/jira/epics', {
+      const response = await fetch('/api/jira/work-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectKey: this.projectKey })
@@ -56,15 +56,15 @@ export class JiraIntegrationService {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ API Error: ${response.status} ${response.statusText} - ${errorText}`);
-        throw new Error(`Failed to extract epics: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`Failed to extract work items: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
       const workItems: WorkItem[] = await response.json();
-      console.log(`✅ Extracted ${workItems.length} epics as work items from Jira`);
+      console.log(`✅ Extracted ${workItems.length} regular work items (excluding epics) from Jira`);
       
       return workItems;
     } catch (error) {
-      console.error('❌ Error extracting epics from Jira:', error);
+      console.error('❌ Error extracting work items from Jira:', error);
       throw error;
     }
   }
@@ -165,20 +165,20 @@ export class JiraIntegrationService {
     }
   }
 
-  // Import both team members and epics
+  // Import team members and regular work items (NOT epics)
   async importFromJira(): Promise<{
     teamMembers: TeamMember[];
     workItems: WorkItem[];
   }> {
-    console.log(`🚀 Starting Jira import from project: ${this.projectKey}`);
+    console.log(`🚀 Starting Jira import from project: ${this.projectKey} (regular work items only, NOT epics)`);
     
     try {
       const [teamMembers, workItems] = await Promise.all([
         this.extractTeamMembers(),
-        this.extractEpics()
+        this.extractWorkItems()
       ]);
       
-      console.log(`✅ Jira import completed: ${teamMembers.length} team members, ${workItems.length} work items`);
+      console.log(`✅ Jira import completed: ${teamMembers.length} team members, ${workItems.length} regular work items (epics excluded)`);
       
       return { teamMembers, workItems };
     } catch (error) {

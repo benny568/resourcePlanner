@@ -3,6 +3,7 @@ import { WorkItem, Sprint, ResourcePlanningData } from '../types';
 import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems } from '../utils/dateUtils';
+import { workItemsApi, transformers } from '../services/api';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
@@ -95,14 +96,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         });
       });
       
-      // Also check Epic objects from Jira imports
-      data.epics.forEach(epic => {
-        epic.children.forEach(child => {
-          if (child.assignedSprints.includes(sprint.id)) {
-            assignedEpicChildren.push(child);
-          }
-        });
-      });
+      // NOTE: Epic children from data.epics are NOT included until manually converted to work items
+      // This prevents epic children from appearing as if they're automatically work items
       
       // Combine all assigned items
       const allAssignedItems = [...assignedItems, ...assignedEpicChildren];
@@ -255,7 +250,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   };
 
   // Assign item to sprint
-  const assignItemToSprint = (itemId: string, sprintId: string) => {
+  const assignItemToSprint = async (itemId: string, sprintId: string) => {
     // First, try to find the item in main work items array
     let workItem = data.workItems.find(item => item.id === itemId);
     
@@ -313,6 +308,25 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     }
 
+    // Save sprint assignment to database (for regular work items, not epic children)
+    const isRegularWorkItem = data.workItems.some(item => item.id === itemId);
+    if (isRegularWorkItem) {
+      try {
+        console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
+        await workItemsApi.assignToSprint(itemId, sprintId);
+        console.log('✅ Sprint assignment saved to database');
+      } catch (error) {
+        console.error('❌ Failed to save sprint assignment to database:', error);
+        alert('Failed to save sprint assignment. Please try again.');
+        return;
+      }
+    } else {
+      // Epic child - cannot be assigned to sprints directly
+      // User must first convert the epic to work items via "Add to Work Items" button
+      alert(`Cannot assign epic child "${workItem.title}" to sprint.\n\nEpic children must be converted to work items first.\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
+      return;
+    }
+
     const updatedWorkItems = data.workItems.map(item => {
       // Handle regular work items
       if (item.id === itemId) {
@@ -361,7 +375,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   };
 
   // Remove item from sprint
-  const removeItemFromSprint = (itemId: string, sprintId: string) => {
+  const removeItemFromSprint = async (itemId: string, sprintId: string) => {
+    // Save sprint removal to database (for both regular work items and epic children that have been saved)
+    try {
+      console.log(`💾 Removing sprint assignment from database: ${itemId} ← ${sprintId}`);
+      await workItemsApi.removeFromSprint(itemId, sprintId);
+      console.log('✅ Sprint assignment removed from database');
+    } catch (error) {
+      console.error('❌ Failed to remove sprint assignment from database:', error);
+      console.log('⚠️ Item might be an unsaved epic child, continuing with local state update');
+    }
+
     const updatedWorkItems = data.workItems.map(item => {
       // Handle regular work items
       if (item.id === itemId) {
@@ -706,6 +730,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Information about imported epics */}
+              {data.epics.length > 0 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="text-md font-medium text-yellow-800 mb-2 flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    Imported Epics ({data.epics.length})
+                  </h4>
+                  <p className="text-sm text-yellow-700 mb-2">
+                    You have {data.epics.length} imported epic(s) with {data.epics.reduce((total, epic) => total + epic.children.length, 0)} total children that are not yet converted to work items.
+                  </p>
+                  <p className="text-xs text-yellow-600">
+                    To assign epic children to sprints, go to the <strong>Epics</strong> tab and click <strong>"Add to Work Items"</strong> for each epic you want to convert.
+                  </p>
                 </div>
               )}
             </div>

@@ -110,11 +110,27 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
       try {
         const item = workItems.find(i => i.id === itemId);
         
-        // Epic work items are not stored in backend, so only update local state
         if (item?.isEpic) {
-          console.log(`🗑️ Deleting epic work item: ${itemId} (local state only)`);
+          console.log(`🗑️ Deleting epic work item: ${itemId} (backend + local state)`);
+          // Epic work items ARE stored in backend when converted from epics
+          await workItemsApi.delete(itemId);
+          
+          // Also delete all children that might be stored separately
+          if (item.children && item.children.length > 0) {
+            console.log(`🗑️ Deleting ${item.children.length} epic children from backend...`);
+            for (const child of item.children) {
+              try {
+                await workItemsApi.delete(child.id);
+                console.log(`✅ Deleted epic child: ${child.id}`);
+              } catch (childError) {
+                console.warn(`⚠️ Failed to delete epic child ${child.id}:`, childError);
+                // Continue with other children even if one fails
+              }
+            }
+          }
+          
           onUpdateWorkItems(workItems.filter(item => item.id !== itemId));
-          console.log('Epic work item deleted successfully');
+          console.log('Epic work item and children deleted successfully');
         } else {
           // Regular work items need to be deleted from backend
           console.log(`🗑️ Deleting work item: ${itemId} (backend + local state)`);

@@ -50,13 +50,16 @@ function App() {
     }
   };
 
-  // Load data from API with localStorage fallback
+  // Load data from API
   const loadData = async () => {
+    console.log('🔄 Starting loadData...');
     setIsLoading(true);
     const connected = await checkApiConnection();
+    console.log('🔗 API connection check result:', connected);
     
     if (connected) {
       try {
+        console.log('📡 Making API calls...');
         // Load all data from API
         const [teamMembers, workItems, sprints, holidays, sprintConfig] = await Promise.all([
           teamMembersApi.getAll(),
@@ -65,58 +68,57 @@ function App() {
           holidaysApi.getAll(),
           sprintConfigApi.get()
         ]);
+        console.log('📦 Received data - workItems count:', workItems.length);
+
+        // Transform work items and extract epics
+        const transformedWorkItems = workItems.map(transformers.workItemFromApi);
+        console.log('🔄 Transformed work items:', transformedWorkItems.length);
+        console.log('🔍 Work items details:', transformedWorkItems.map(w => ({id: w.id, title: w.title, isEpic: w.isEpic})));
+        
+        // Extract epic work items and convert them back to epics
+        const epicWorkItems = transformedWorkItems.filter(item => item.isEpic);
+        console.log('📋 Epic work items found:', epicWorkItems.length);
+        const loadedEpics = epicWorkItems.map(epicWorkItem => ({
+          id: epicWorkItem.id,
+          jiraId: epicWorkItem.jiraId || '',
+          title: epicWorkItem.title,
+          description: epicWorkItem.description || '',
+          status: epicWorkItem.status || 'Not Started',
+          jiraStatus: epicWorkItem.jiraStatus || '',
+          totalStoryPoints: epicWorkItem.estimateStoryPoints,
+          completedStoryPoints: 0, // Calculate from children if needed
+          children: epicWorkItem.children || []
+        }));
+
+        // Keep only non-epic work items that are NOT epic children (independent work items only)
+        const nonEpicWorkItems = transformedWorkItems.filter(item => !item.isEpic && !item.epicId);
+        console.log('🎯 Final work items to store:', nonEpicWorkItems.length);
+        console.log('🎯 Final work items details:', nonEpicWorkItems.map(w => ({id: w.id, title: w.title})));
 
         setData({
           teamMembers: teamMembers.map(transformers.teamMemberFromApi),
-          workItems: workItems.map(transformers.workItemFromApi),
-          epics: [], // TODO: Load epics from API
+          workItems: nonEpicWorkItems,
+          epics: loadedEpics,
           sprints: sprints.map(transformers.sprintFromApi),
           publicHolidays: holidays.map(transformers.holidayFromApi),
           sprintConfig: transformers.sprintConfigFromApi(sprintConfig)
         });
 
-        console.log('✅ Data loaded from API successfully');
+        console.log('✅ Data loaded from API successfully - final state set');
       } catch (error) {
-        console.error('❌ Failed to load from API, falling back to localStorage:', error);
-        loadFromLocalStorage();
+        console.error('❌ Failed to load from API:', error);
+        // No fallback - app requires API connection
       }
     } else {
-      console.log('🔄 API not available, loading from localStorage');
-      loadFromLocalStorage();
+      console.log('🔄 API not available - app requires API connection');
+      // No fallback - app requires API connection
     }
     setIsLoading(false);
   };
 
-  // Load data from localStorage
-  const loadFromLocalStorage = () => {
-    try {
-      const storedData = localStorage.getItem('resourcePlannerData');
-      if (storedData) {
-        const parsed = JSON.parse(storedData);
-        setData({
-          ...data,
-          ...parsed,
-          sprintConfig: {
-            ...data.sprintConfig,
-            ...parsed.sprintConfig,
-            firstSprintStartDate: new Date(parsed.sprintConfig?.firstSprintStartDate || '2025-01-06')
-          }
-        });
-        console.log('✅ Data loaded from localStorage');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load from localStorage:', error);
-    }
-  };
 
-  // Save to localStorage
-  const saveToLocalStorage = (newData: AppData) => {
-    try {
-      localStorage.setItem('resourcePlannerData', JSON.stringify(newData));
-    } catch (error) {
-      console.error('❌ Failed to save to localStorage:', error);
-    }
-  };
+
+
 
   // Initial load
   useEffect(() => {
@@ -127,10 +129,7 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Save to localStorage whenever data changes
-  useEffect(() => {
-    saveToLocalStorage(data);
-  }, [data]);
+
 
   const updateTeamMembers = async (teamMembers: TeamMember[]) => {
     setData(prev => ({ ...prev, teamMembers }));
@@ -307,26 +306,31 @@ function App() {
         }
       }
       
-             // Save new work items to database and get back the database IDs
-       const savedWorkItems: WorkItem[] = [];
-       if (isApiConnected) {
-         for (const workItem of newWorkItems) {
-           try {
-             console.log(`💾 Saving work item to database: ${workItem.title}`);
-             console.log('📋 Work item data:', workItem);
-             const apiData = transformers.workItemToApi(workItem);
-             console.log('📡 Transformed API data:', apiData);
-             const savedItem = await workItemsApi.create(apiData);
-             console.log('✅ Saved work item response:', savedItem);
-             savedWorkItems.push(transformers.workItemFromApi(savedItem));
-           } catch (error) {
-             console.error(`❌ Failed to save work item ${workItem.title}:`, error);
-             console.error('📋 Work item that failed:', workItem);
-           }
-         }
-       } else {
-         console.log('⚠️ API not connected, skipping work item database save');
-       }
+      // Save new work items to database and get back the database IDs
+      const savedWorkItems: WorkItem[] = [];
+      if (isApiConnected) {
+        for (const workItem of newWorkItems) {
+          try {
+            console.log(`💾 Saving work item to database: ${workItem.title}`);
+            console.log('📋 Work item data:', workItem);
+            const apiData = transformers.workItemToApi(workItem);
+            console.log('📡 Transformed API data:', apiData);
+            const savedItem = await workItemsApi.create(apiData);
+            console.log('✅ Saved work item response:', savedItem);
+            savedWorkItems.push(transformers.workItemFromApi(savedItem));
+          } catch (error) {
+            console.error(`❌ Failed to save work item ${workItem.title}:`, error);
+            console.error('📋 Work item that failed:', workItem);
+          }
+        }
+      } else {
+        console.log('⚠️ API not connected, skipping work item database save');
+      }
+      
+      // Note: Epic children are NOT automatically saved to database during import
+      // They will only be saved when user manually clicks "Add to Work Items" in EpicsManagement
+      console.log(`📋 Epic import completed - epics and children are available for manual conversion to work items`);
+      const savedEpicChildren: WorkItem[] = []; // Empty array since we're not auto-saving children
       
       // Update existing work items with fresh Jira data
       const updatedWorkItems: WorkItem[] = [];
@@ -370,8 +374,8 @@ function App() {
         }
       }
       
-      // Add new items
-      mergedWorkItems = [...mergedWorkItems, ...savedWorkItems];
+      // Add new items and epic children
+      mergedWorkItems = [...mergedWorkItems, ...savedWorkItems, ...savedEpicChildren];
       
       // Process epics if provided
       let mergedEpics = [...data.epics];
@@ -408,7 +412,7 @@ function App() {
       // Show summary alert
       let alertMessage = `Jira Import Complete!\n\n✅ Added ${savedTeamMembers.length} new team members\n✅ Added ${savedWorkItems.length} new work items`;
       if (epicCount > 0) {
-        alertMessage += `\n📁 Added ${epicCount} epics with children`;
+        alertMessage += `\n📁 Imported ${epicCount} epics (displayed only - use "Add to Work Items" to save)`;
       }
       alertMessage += `\n🔄 Updated ${updatedWorkItems.length} existing work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`;
       alert(alertMessage);

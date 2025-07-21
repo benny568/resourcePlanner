@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Epic, WorkItem } from '../types';
 import { ChevronDown, ChevronRight, Briefcase, CheckCircle, Clock, AlertCircle, ExternalLink, Trash2, Plus } from 'lucide-react';
+import { workItemsApi, transformers } from '../services/api';
 
 interface EpicsManagementProps {
   epics: Epic[];
@@ -25,23 +26,83 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
     setExpandedEpics(newExpanded);
   };
 
-  const deleteEpic = (epicId: string, epicTitle: string) => {
-    const confirmed = window.confirm(`Are you sure you want to delete epic "${epicTitle}"?\n\nThis will permanently remove the epic and all its child tickets from the local list.`);
+  const deleteEpic = async (epicId: string, epicTitle: string) => {
+    const confirmed = window.confirm(`Are you sure you want to delete epic "${epicTitle}"?\n\nThis will permanently remove the epic and all its child tickets from both the local list and the database (if it was previously added to Work Items).`);
     
     if (confirmed) {
-      const updatedEpics = epics.filter(epic => epic.id !== epicId);
-      onUpdateEpics(updatedEpics);
-      
-      // Also remove from expanded set if it was expanded
-      const newExpanded = new Set(expandedEpics);
-      newExpanded.delete(epicId);
-      setExpandedEpics(newExpanded);
-      
-      console.log(`🗑️ Deleted epic: ${epicId} - ${epicTitle}`);
+      try {
+        // Check if this epic has been converted to a work item and needs database cleanup
+        console.log(`🗑️ Deleting epic: ${epicId} - ${epicTitle}`);
+        
+        // Try to delete from database in case it was converted to a work item
+        // We'll attempt to delete by jiraId since that's more reliable than local ID
+        const epic = epics.find(e => e.id === epicId);
+        if (epic?.jiraId) {
+          try {
+            // First check if we can find the work item by calling the API to get all work items
+            const allWorkItems = await workItemsApi.getAll();
+            const epicWorkItem = allWorkItems.find((item: any) => 
+              item.isEpic && (item.jiraId === epic.jiraId || item.id === epicId)
+            );
+            
+            if (epicWorkItem) {
+              console.log(`🗑️ Found epic work item in database: ${epicWorkItem.id}, deleting...`);
+              await workItemsApi.delete(epicWorkItem.id);
+              console.log(`✅ Epic work item deleted from database: ${epicWorkItem.id}`);
+              
+              // Also need to inform WorkItemManagement to update its state if available
+              if (onUpdateWorkItems) {
+                onUpdateWorkItems(prevWorkItems => 
+                  prevWorkItems.filter(item => 
+                    !(item.isEpic && (item.jiraId === epic.jiraId || item.id === epicId))
+                  )
+                );
+              }
+            } else {
+              console.log(`ℹ️ Epic ${epic.jiraId} not found in database (was not converted to work item)`);
+            }
+          } catch (dbError) {
+            console.log(`ℹ️ Epic ${epic.jiraId} not found in database or failed to delete:`, dbError);
+            // Continue with local deletion even if database deletion fails
+          }
+        }
+        
+        // Always update local state regardless of database outcome
+        const updatedEpics = epics.filter(epic => epic.id !== epicId);
+        onUpdateEpics(updatedEpics);
+        
+        // Also remove from expanded set if it was expanded
+        const newExpanded = new Set(expandedEpics);
+        newExpanded.delete(epicId);
+        setExpandedEpics(newExpanded);
+        
+        console.log(`✅ Epic deleted successfully: ${epicId} - ${epicTitle}`);
+        
+      } catch (error) {
+        console.error('❌ Error during epic deletion:', error);
+        alert(`Failed to delete epic "${epicTitle}". Please try again.`);
+      }
     }
   };
 
-  const addEpicToWorkItems = (epic: Epic) => {
+  const addEpicToWorkItems = async (epic: Epic) => {
+    console.log('🔥 addEpicToWorkItems FUNCTION CALLED with epic:', epic?.title || 'undefined epic');
+    
+    // CRITICAL SAFEGUARD: This function should ONLY be called by explicit user action
+    // If this function is being called automatically, there's a bug in the import flow
+    console.log('🛡️ SAFEGUARD CHECK: addEpicToWorkItems should only be called by user button click');
+    
+    // Add stack trace to debug automatic calls
+    console.log('📍 STACK TRACE:', new Error().stack);
+    
+    // COMPLETE BLOCK: Prevent any automatic execution during import
+    // This function should NEVER be called without explicit user confirmation
+    if (!window.confirm('DEBUG: Is this a manual user action? Click OK only if you clicked the "Add to Work Items" button.')) {
+      console.error('❌ BLOCKED: addEpicToWorkItems called automatically during import - this is NOT allowed');
+      alert('Epic children auto-save blocked! Epic children should only be converted manually by clicking "Add to Work Items".');
+      return;
+    }
+    
     if (!onUpdateWorkItems) {
       console.warn('⚠️ onUpdateWorkItems callback not provided');
       return;
@@ -52,55 +113,85 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
       `This will:\n` +
       `• Add the epic as an expandable work item\n` +
       `• Keep all ${epic.children.length} child tickets nested within it\n` +
-      `• Remove the epic from the Epics list\n\n` +
+      `• Remove the epic from the Epics list\n` +
+      `• Save the epic to the database for persistence\n\n` +
       `You can expand/collapse and manage it in the Work Items tab.`
     );
     
     if (confirmed) {
-      // Convert epic to work item while preserving children structure
-      const epicAsWorkItem: WorkItem = {
-        id: epic.id,
-        jiraId: epic.jiraId,
-        title: epic.title, // Keep original title, no [EPIC] prefix
-        description: epic.description,
-        estimateStoryPoints: epic.totalStoryPoints,
-        requiredCompletionDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000), // 180 days from now
-        requiredSkills: [], // Epic-level work item doesn't need specific skills
-        dependencies: [],
-        status: epic.status,
-        jiraStatus: epic.jiraStatus,
-        assignedSprints: [],
-        // Special properties to identify this as an epic work item
-        isEpic: true,
-        children: epic.children // Preserve the children structure
-      };
+      console.log('✅ USER CONFIRMED - proceeding with epic conversion');
+      try {
+        console.log('🚀 STARTING EPIC TO WORK ITEMS CONVERSION...');
+        // Convert epic to work item while preserving children structure
+        const epicAsWorkItem: WorkItem = {
+          id: epic.id,
+          jiraId: epic.jiraId,
+          title: epic.title, // Keep original title, no [EPIC] prefix
+          description: epic.description,
+          estimateStoryPoints: epic.totalStoryPoints,
+          requiredCompletionDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000), // 180 days from now
+          requiredSkills: [], // Epic-level work item doesn't need specific skills
+          dependencies: [],
+          status: epic.status,
+          jiraStatus: epic.jiraStatus,
+          assignedSprints: [],
+          // Special properties to identify this as an epic work item
+          isEpic: true,
+          children: epic.children // Preserve the children structure
+        };
 
-      // Update work items - add epic with children
-      onUpdateWorkItems((prevWorkItems) => {
-        // Check for duplicates by jiraId or id
-        const existingJiraIds = new Set(prevWorkItems.map(item => item.jiraId).filter(Boolean));
-        const existingIds = new Set(prevWorkItems.map(item => item.id));
+        console.log('🎯 ABOUT TO START DATABASE SAVES...');
+        // Save ONLY the epic work item to database (with children attached, not as separate items)
+        console.log(`💾 Saving epic work item to database: ${epic.title}`);
+        const apiData = transformers.workItemToApi(epicAsWorkItem);
+        const savedEpicWorkItem = await workItemsApi.create(apiData);
+        const transformedEpicWorkItem = transformers.workItemFromApi(savedEpicWorkItem);
         
-        // Only add if not duplicate
-        if (!existingJiraIds.has(epicAsWorkItem.jiraId) && !existingIds.has(epicAsWorkItem.id)) {
-          console.log(`📝 Added epic work item with ${epic.children.length} children`);
-          return [...prevWorkItems, epicAsWorkItem];
-        } else {
-          console.log(`⚠️ Epic ${epic.jiraId} already exists in work items`);
-          return prevWorkItems;
-        }
-      });
+        // Attach the original children to the epic work item for local state
+        // Children are NOT saved as separate database records - they remain as part of the epic
+        transformedEpicWorkItem.children = epic.children;
+        
+        console.log(`✅ Epic work item saved to database with ID: ${transformedEpicWorkItem.id}`);
+        console.log(`📝 Epic has ${epic.children.length} children attached (not saved as separate work items)`);
+        
+        // No individual child saving - children remain as part of the epic structure
+        
+        console.log(`✅ Epic with ${epic.children.length} children saved to database`);
 
-      // Remove epic from epics list
-      const updatedEpics = epics.filter(e => e.id !== epic.id);
-      onUpdateEpics(updatedEpics);
-      
-      // Remove from expanded set if it was expanded
-      const newExpanded = new Set(expandedEpics);
-      newExpanded.delete(epic.id);
-      setExpandedEpics(newExpanded);
-      
-      console.log(`✅ Moved epic "${epic.title}" with ${epic.children.length} children to Work Items`);
+        // Update work items - add only the epic (children are attached to it)
+        onUpdateWorkItems((prevWorkItems) => {
+          // Check for duplicates by jiraId
+          const existingJiraIds = new Set(prevWorkItems.map(item => item.jiraId).filter(Boolean));
+          
+          // Only add if not duplicate
+          if (!existingJiraIds.has(transformedEpicWorkItem.jiraId)) {
+            console.log(`📝 Added epic work item with ${epic.children.length} children attached to local state`);
+            // Add only the epic work item (children are attached as epic.children property)
+            // Do NOT add children as separate work items to avoid duplication
+            return [...prevWorkItems, transformedEpicWorkItem];
+          } else {
+            console.log(`⚠️ Epic ${epic.jiraId} already exists in work items`);
+            return prevWorkItems;
+          }
+        });
+
+        // Remove epic from epics list
+        const updatedEpics = epics.filter(e => e.id !== epic.id);
+        onUpdateEpics(updatedEpics);
+        
+        // Remove from expanded set if it was expanded
+        const newExpanded = new Set(expandedEpics);
+        newExpanded.delete(epic.id);
+        setExpandedEpics(newExpanded);
+        
+        console.log(`✅ Epic "${epic.title}" saved to database and moved to Work Items`);
+        
+      } catch (error) {
+        console.error('❌ Failed to save epic work item to database:', error);
+        alert(`Failed to save epic "${epic.title}" to database. Please try again.`);
+      }
+    } else {
+      console.log('❌ USER CANCELLED - epic conversion aborted');
     }
   };
 
@@ -235,9 +326,9 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
                     
                     {/* Delete Button */}
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        deleteEpic(epic.id, epic.title);
+                        await deleteEpic(epic.id, epic.title);
                       }}
                       className="p-2 text-red-600 hover:bg-red-50 rounded-md transition-colors"
                       title={`Delete epic ${epic.jiraId}`}

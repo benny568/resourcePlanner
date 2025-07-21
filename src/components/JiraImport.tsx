@@ -312,7 +312,7 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
               </div>
               <div className="flex items-center gap-2 text-sm text-green-700">
                 <Briefcase className="h-4 w-4" />
-                <span>Imported {importResults.workItemsCount} epics as work items</span>
+                <span>Imported {importResults.workItemsCount} work items</span>
               </div>
             </div>
           </div>

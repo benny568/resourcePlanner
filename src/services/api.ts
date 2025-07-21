@@ -189,24 +189,55 @@ export const transformers = {
   }),
   
   // Convert frontend work item to backend format
-  workItemToApi: (item: any) => ({
-    title: item.title,
-    description: item.description,
-    estimateStoryPoints: item.estimateStoryPoints,
-    requiredCompletionDate: item.requiredCompletionDate instanceof Date 
-      ? item.requiredCompletionDate.toISOString() 
-      : item.requiredCompletionDate,
-    requiredSkills: item.requiredSkills,
-    dependencies: item.dependencies,
-    status: item.status,
-    jiraId: item.jiraId,
-    jiraStatus: item.jiraStatus,
-    assignedSprints: item.assignedSprints,
-    epicId: item.epicId,
-    // Epic work item specific properties
-    isEpic: item.isEpic,
-    children: item.children
-  }),
+  workItemToApi: (item: any) => {
+    // Validate and ensure required fields have proper values
+    const title = item.title?.trim() || 'Untitled Work Item';
+    const estimateStoryPoints = Math.max(Number(item.estimateStoryPoints) || 1, 0.5);
+    const requiredSkills = Array.isArray(item.requiredSkills) && item.requiredSkills.length > 0 
+      ? item.requiredSkills 
+      : ['frontend', 'backend']; // Default to both skills if none specified
+    
+    // Ensure requiredCompletionDate is properly set
+    let requiredCompletionDate: string;
+    if (item.requiredCompletionDate instanceof Date) {
+      requiredCompletionDate = item.requiredCompletionDate.toISOString();
+    } else if (item.requiredCompletionDate) {
+      requiredCompletionDate = new Date(item.requiredCompletionDate).toISOString();
+    } else {
+      // Default to 90 days from now if no date provided
+      requiredCompletionDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    const apiData = {
+      title,
+      description: item.description || '',
+      estimateStoryPoints,
+      requiredCompletionDate,
+      requiredSkills,
+      dependencies: item.dependencies || [],
+      status: item.status || 'Not Started',
+      jiraId: item.jiraId,
+      jiraStatus: item.jiraStatus,
+      assignedSprints: item.assignedSprints || [],
+      epicId: item.epicId,
+      // Epic work item specific properties
+      isEpic: item.isEpic || false,
+      children: item.children
+    };
+
+    // Log validation fixes for debugging
+    if (item.title?.trim() !== title) {
+      console.log(`🔧 Fixed empty title: "${item.title}" → "${title}"`);
+    }
+    if (Number(item.estimateStoryPoints) !== estimateStoryPoints) {
+      console.log(`🔧 Fixed story points: ${item.estimateStoryPoints} → ${estimateStoryPoints}`);
+    }
+    if (!Array.isArray(item.requiredSkills) || item.requiredSkills.length === 0) {
+      console.log(`🔧 Fixed empty skills: ${JSON.stringify(item.requiredSkills)} → ${JSON.stringify(requiredSkills)}`);
+    }
+
+    return apiData;
+  },
   
   // Convert backend work item to frontend format
   workItemFromApi: (item: any) => ({
