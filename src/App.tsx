@@ -70,34 +70,21 @@ function App() {
         ]);
         console.log('📦 Received data - workItems count:', workItems.length);
 
-        // Transform work items and extract epics
+        // Transform work items - ALL items from database should be treated as work items
         const transformedWorkItems = workItems.map(transformers.workItemFromApi);
         console.log('🔄 Transformed work items:', transformedWorkItems.length);
         console.log('🔍 Work items details:', transformedWorkItems.map(w => ({id: w.id, title: w.title, isEpic: w.isEpic})));
         
-        // Extract epic work items and convert them back to epics
-        const epicWorkItems = transformedWorkItems.filter(item => item.isEpic);
-        console.log('📋 Epic work items found:', epicWorkItems.length);
-        const loadedEpics = epicWorkItems.map(epicWorkItem => ({
-          id: epicWorkItem.id,
-          jiraId: epicWorkItem.jiraId || '',
-          title: epicWorkItem.title,
-          description: epicWorkItem.description || '',
-          status: epicWorkItem.status || 'Not Started',
-          jiraStatus: epicWorkItem.jiraStatus || '',
-          totalStoryPoints: epicWorkItem.estimateStoryPoints,
-          completedStoryPoints: 0, // Calculate from children if needed
-          children: epicWorkItem.children || []
-        }));
-
-        // Keep only non-epic work items that are NOT epic children (backend handles epic children)
-        const nonEpicWorkItems = transformedWorkItems.filter(item => !item.isEpic && !item.epicId);
-        console.log('🎯 Final work items to store:', nonEpicWorkItems.length);
-        console.log('🎯 Final work items details:', nonEpicWorkItems.map(w => ({id: w.id, title: w.title, epicId: w.epicId})));
+        // Epic work items (converted via "Add to Work Items") should stay in Work Items tab
+        console.log('🎯 Final work items to store:', transformedWorkItems.length);
+        console.log('🎯 Final work items details:', transformedWorkItems.map(w => ({id: w.id, title: w.title, isEpic: w.isEpic, epicId: w.epicId})));
+        
+        // No epic work items should be moved back to epics - they belong in Work Items tab
+        const loadedEpics: any[] = [];
 
         setData({
           teamMembers: teamMembers.map(transformers.teamMemberFromApi),
-          workItems: nonEpicWorkItems,
+          workItems: transformedWorkItems,
           epics: loadedEpics,
           sprints: sprints.map(transformers.sprintFromApi),
           publicHolidays: holidays.map(transformers.holidayFromApi),
