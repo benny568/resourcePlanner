@@ -51,6 +51,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed') // At least one unassigned child
   );
 
+
+
   // Debug logging for epic work items
   React.useEffect(() => {
     console.log('🔍 Sprint Planning Epic Debug:');
