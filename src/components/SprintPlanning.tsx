@@ -55,28 +55,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
   // Debug logging for epic work items
   React.useEffect(() => {
-    console.log('🔍 Sprint Planning Epic Debug:');
-    console.log('📊 All work items:', data.workItems.length);
-    const epicWorkItems = data.workItems.filter(item => item.isEpic);
-    console.log('📊 Work items with isEpic=true:', epicWorkItems);
-    console.log('📊 Unassigned epic work items:', unassignedEpicWorkItems);
-    
-    // Check REF-2794 specifically
-    const ref2794 = data.workItems.find(item => item.jiraId === 'REF-2794');
-    if (ref2794) {
-      console.log('📋 REF-2794 details:', {
-        id: ref2794.id,
-        jiraId: ref2794.jiraId,
-        isEpic: ref2794.isEpic,
-        hasChildren: !!ref2794.children,
-        childrenCount: ref2794.children?.length || 0,
-        children: ref2794.children,
-        assignedSprints: ref2794.assignedSprints,
-        status: ref2794.status,
-        estimateStoryPoints: ref2794.estimateStoryPoints
-      });
+    if (unassignedEpicWorkItems.length > 0) {
+      console.log('🔍 Sprint Planning - Epics available:', unassignedEpicWorkItems.map(e => e.title));
+      console.log('📊 Total epic children available:', unassignedEpicWorkItems.reduce((sum, epic) => sum + (epic.children?.length || 0), 0));
     }
-  }, [data.workItems, unassignedEpicWorkItems]);
+  }, [unassignedEpicWorkItems]);
 
   // Get upcoming sprints (not in the past)
   const upcomingSprints = data.sprints.filter(sprint => 
@@ -523,7 +506,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold mb-4">Unassigned Work Items</h3>
           
-          {unassignedItems.length === 0 ? (
+          {unassignedItems.length === 0 && unassignedEpicWorkItems.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <CheckCircle className="h-12 w-12 mx-auto mb-2 text-green-300" />
               <p>All items are assigned!</p>
@@ -635,19 +618,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 </div>
               )}
 
-              {/* Epic Work Items */}
-              {unassignedEpicWorkItems.length > 0 && (
-                <div>
-                  <h4 className="text-md font-medium text-indigo-700 mb-2 flex items-center gap-2">
-                    <ChevronDown className="h-4 w-4" />
-                    Epic Work Items ({unassignedEpicWorkItems.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {unassignedEpicWorkItems.map(epic => (
+              {/* Epic Work Items - Display as top-level items */}
+              {unassignedEpicWorkItems.map(epic => (
                       <div key={epic.id} className="border rounded-lg bg-indigo-50 border-indigo-200">
                         {/* Epic Header */}
                         <div 
-                          className="p-3 cursor-pointer flex items-center gap-2"
+                          className="p-3 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
                           onClick={() => toggleEpicExpansion(epic.id)}
                         >
                           {expandedEpics.has(epic.id) ? (
@@ -656,9 +632,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             <ChevronRight className="h-4 w-4 text-indigo-600" />
                           )}
                           <div className="flex-1">
-                            <div className="font-medium text-sm text-indigo-800">{epic.title}</div>
+                            <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
+                              📋 {epic.title}
+                            </div>
                             <div className="text-xs text-indigo-600">
-                              {epic.children?.length || 0} children • {epic.jiraId}
+                              Epic • {epic.children?.length || 0} children • {epic.jiraId}
                             </div>
                           </div>
                         </div>
@@ -734,9 +712,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         )}
                       </div>
                     ))}
-                  </div>
-                </div>
-              )}
 
               {/* Information about imported epics */}
               {data.epics.length > 0 && (
