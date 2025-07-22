@@ -296,9 +296,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     }
 
-    // Save sprint assignment to database (for regular work items, not epic children)
-    const isRegularWorkItem = data.workItems.some(item => item.id === itemId);
-    if (isRegularWorkItem) {
+    // Save sprint assignment to database
+    // Both regular work items and epic children (if they exist as work items) can be assigned
+    const isWorkItem = data.workItems.some(item => item.id === itemId);
+    const isEpicChild = data.workItems.some(epic => 
+      epic.isEpic && epic.children?.some(child => child.id === itemId)
+    );
+    
+    if (isWorkItem || isEpicChild) {
       try {
         console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
         await workItemsApi.assignToSprint(itemId, sprintId);
@@ -309,9 +314,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         return;
       }
     } else {
-      // Epic child - cannot be assigned to sprints directly
-      // User must first convert the epic to work items via "Add to Work Items" button
-      alert(`Cannot assign epic child "${workItem.title}" to sprint.\n\nEpic children must be converted to work items first.\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
+      // This is an imported epic child that hasn't been converted to a work item yet
+      alert(`Cannot assign "${workItem.title}" to sprint.\n\nThis item needs to be converted to a work item first.\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
       return;
     }
 
