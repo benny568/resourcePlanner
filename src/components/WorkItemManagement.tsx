@@ -384,12 +384,12 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
 
         {/* Work items list */}
         <div className="space-y-3">
-          {workItems.length === 0 ? (
+          {workItems.filter(item => !item.epicId).length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               No work items added yet. Click "Add Work Item" to get started.
             </div>
           ) : (
-            workItems.map((item) => {
+            workItems.filter(item => !item.epicId).map((item) => {
               // Handle epic work items with expandable children
               if (item.isEpic) {
                 console.log(`🔍 Rendering epic work item: ${item.id}`, { 
