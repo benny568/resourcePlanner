@@ -90,18 +90,8 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
     
     // CRITICAL SAFEGUARD: This function should ONLY be called by explicit user action
     // If this function is being called automatically, there's a bug in the import flow
-    console.log('🛡️ SAFEGUARD CHECK: addEpicToWorkItems should only be called by user button click');
-    
-    // Add stack trace to debug automatic calls
-    console.log('📍 STACK TRACE:', new Error().stack);
-    
-    // COMPLETE BLOCK: Prevent any automatic execution during import
-    // This function should NEVER be called without explicit user confirmation
-    if (!window.confirm('DEBUG: Is this a manual user action? Click OK only if you clicked the "Add to Work Items" button.')) {
-      console.error('❌ BLOCKED: addEpicToWorkItems called automatically during import - this is NOT allowed');
-      alert('Epic children auto-save blocked! Epic children should only be converted manually by clicking "Add to Work Items".');
-      return;
-    }
+    console.log('🛡️ addEpicToWorkItems called for epic:', epic.title);
+    console.log('📍 Function called by user button click');
     
     if (!onUpdateWorkItems) {
       console.warn('⚠️ onUpdateWorkItems callback not provided');
@@ -120,6 +110,40 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
     
     if (confirmed) {
       console.log('✅ USER CONFIRMED - proceeding with epic conversion');
+      
+      // First check if this epic already exists as a work item
+      console.log(`🔍 Checking for existing epic work item with jiraId: ${epic.jiraId}`);
+      try {
+        const workItemsResponse = await workItemsApi.getAll();
+        console.log(`📋 Found ${workItemsResponse.length} total work items from API`);
+        
+        const existingWorkItems = workItemsResponse.map((item: any) => transformers.workItemFromApi(item));
+        console.log(`🔄 Transformed ${existingWorkItems.length} work items successfully`);
+        
+        const epicWorkItems = existingWorkItems.filter(item => item.isEpic);
+        console.log(`👑 Found ${epicWorkItems.length} epic work items:`, epicWorkItems.map(e => ({id: e.id, jiraId: e.jiraId, title: e.title})));
+        
+        const existingEpicWorkItem = existingWorkItems.find((item: WorkItem) => 
+          item.isEpic && (item.jiraId === epic.jiraId || item.id === epic.id)
+        );
+        
+        if (existingEpicWorkItem) {
+          console.log(`⚠️ DUPLICATE DETECTED: Epic "${epic.title}" (${epic.jiraId}) already exists as work item ${existingEpicWorkItem.id}`);
+          alert(
+            `Epic "${epic.title}" has already been added to Work Items!\n\n` +
+            `You can find it in the Work Items tab with ID ${existingEpicWorkItem.id}.\n\n` +
+            `If you need to update it, please delete the existing work item first and then re-add the epic.`
+          );
+          return;
+        } else {
+          console.log(`✅ No duplicate found - epic "${epic.title}" (${epic.jiraId}) can be safely added`);
+        }
+      } catch (error) {
+        console.error('❌ Failed to check for existing work items:', error);
+        alert('⚠️ Warning: Could not check for duplicates. The epic might already exist. Continuing anyway...');
+        // Continue with the conversion - let the backend handle duplicate prevention
+      }
+      
       try {
         console.log('🚀 STARTING EPIC TO WORK ITEMS CONVERSION...');
         // Convert epic to work item while preserving children structure
@@ -141,33 +165,66 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
         };
 
         console.log('🎯 ABOUT TO START DATABASE SAVES...');
-        // Save ONLY the epic work item to database (with children attached, not as separate items)
+        // Save epic work item to database
         console.log(`💾 Saving epic work item to database: ${epic.title}`);
-        const apiData = transformers.workItemToApi(epicAsWorkItem);
+        const epicWorkItemData = {
+          ...epicAsWorkItem,
+          children: undefined // Don't send children in API call - they'll be saved separately
+        };
+        const apiData = transformers.workItemToApi(epicWorkItemData);
         const savedEpicWorkItem = await workItemsApi.create(apiData);
         const transformedEpicWorkItem = transformers.workItemFromApi(savedEpicWorkItem);
         
-        // Attach the original children to the epic work item for local state
-        // Children are NOT saved as separate database records - they remain as part of the epic
-        transformedEpicWorkItem.children = epic.children;
-        
         console.log(`✅ Epic work item saved to database with ID: ${transformedEpicWorkItem.id}`);
-        console.log(`📝 Epic has ${epic.children.length} children attached (not saved as separate work items)`);
-        
-        // No individual child saving - children remain as part of the epic structure
-        
-        console.log(`✅ Epic with ${epic.children.length} children saved to database`);
 
-        // Update work items - add only the epic (children are attached to it)
+        // Save each child as a separate work item with epicId reference
+        console.log(`💾 Saving ${epic.children.length} child work items...`);
+        const savedChildren: WorkItem[] = [];
+        for (const child of epic.children) {
+          console.log(`📝 Saving epic child: ${child.title}`);
+          
+          const childWorkItem = {
+            id: child.id,
+            jiraId: child.jiraId,
+            title: child.title,
+            description: child.description,
+            estimateStoryPoints: child.estimateStoryPoints,
+            requiredCompletionDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
+            requiredSkills: child.requiredSkills,
+            dependencies: [],
+            status: child.status,
+            jiraStatus: child.jiraStatus,
+            assignedSprints: [],
+            isEpic: false,
+            epicId: transformedEpicWorkItem.id // Link to parent epic
+          };
+
+          try {
+            const childApiData = transformers.workItemToApi(childWorkItem);
+            const savedChild = await workItemsApi.create(childApiData);
+            const transformedChild = transformers.workItemFromApi(savedChild);
+            savedChildren.push(transformedChild);
+            console.log(`✅ Saved epic child: ${child.title}`);
+          } catch (error) {
+            console.error(`❌ Failed to save epic child ${child.title}:`, error);
+            // Continue with other children even if one fails
+          }
+        }
+
+        // Attach children to epic for local state (they're also in database as separate items)
+        transformedEpicWorkItem.children = savedChildren;
+        
+        console.log(`✅ Epic and ${savedChildren.length} children saved to database`);
+
+        // Update work items - add the epic (children will be loaded from database)
         onUpdateWorkItems((prevWorkItems) => {
           // Check for duplicates by jiraId
           const existingJiraIds = new Set(prevWorkItems.map(item => item.jiraId).filter(Boolean));
           
           // Only add if not duplicate
           if (!existingJiraIds.has(transformedEpicWorkItem.jiraId)) {
-            console.log(`📝 Added epic work item with ${epic.children.length} children attached to local state`);
-            // Add only the epic work item (children are attached as epic.children property)
-            // Do NOT add children as separate work items to avoid duplication
+            console.log(`📝 Added epic work item to local state (children saved separately in database)`);
+            // Add the epic work item - children will be populated by backend automatically
             return [...prevWorkItems, transformedEpicWorkItem];
           } else {
             console.log(`⚠️ Epic ${epic.jiraId} already exists in work items`);

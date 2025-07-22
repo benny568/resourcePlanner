@@ -90,10 +90,10 @@ function App() {
           children: epicWorkItem.children || []
         }));
 
-        // Keep only non-epic work items that are NOT epic children (independent work items only)
+        // Keep only non-epic work items that are NOT epic children (backend handles epic children)
         const nonEpicWorkItems = transformedWorkItems.filter(item => !item.isEpic && !item.epicId);
         console.log('🎯 Final work items to store:', nonEpicWorkItems.length);
-        console.log('🎯 Final work items details:', nonEpicWorkItems.map(w => ({id: w.id, title: w.title})));
+        console.log('🎯 Final work items details:', nonEpicWorkItems.map(w => ({id: w.id, title: w.title, epicId: w.epicId})));
 
         setData({
           teamMembers: teamMembers.map(transformers.teamMemberFromApi),
