@@ -72,10 +72,50 @@ function App() {
         ]);
         console.log('📦 Received data - workItems count:', workItems.length);
 
+                    // Utility function to detect skills from title and description
+            const detectSkillsFromContent = (workItem: any) => {
+              const title = workItem.title?.toLowerCase() || '';
+              const description = workItem.description?.toLowerCase() || '';
+              
+              // Check for explicit skill indicators in title (more reliable)
+              const titleHasBackend = title.includes('be:') || title.includes('backend');
+              const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
+              
+              // Check if title or description contains BE or FE indicators
+              const hasBackendIndicator = title.includes('be') || description.includes('be');
+              const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
+              
+              // Apply automatic skill determination - prioritize title over description
+              if (titleHasFrontend && !titleHasBackend) {
+                // Title explicitly indicates frontend
+                return ['frontend'];
+              } else if (titleHasBackend && !titleHasFrontend) {
+                // Title explicitly indicates backend
+                return ['backend'];
+              } else if (hasBackendIndicator && !hasFrontendIndicator) {
+                // Fall back to description analysis - backend only
+                return ['backend'];
+              } else if (hasFrontendIndicator && !hasBackendIndicator) {
+                // Fall back to description analysis - frontend only
+                return ['frontend'];
+              } else {
+                // Keep existing skills if no clear indicators
+                return workItem.requiredSkills;
+              }
+            };
+
         // Transform work items - ALL items from database should be treated as work items
-        const transformedWorkItems = workItems.map(transformers.workItemFromApi);
-        console.log('🔄 Transformed work items:', transformedWorkItems.length);
-        console.log('🔍 Work items details:', transformedWorkItems.map(w => ({id: w.id, title: w.title, isEpic: w.isEpic})));
+        const transformedWorkItems = workItems.map(item => {
+          const transformed = transformers.workItemFromApi(item);
+          // Apply skill detection to all work items
+          const detectedSkills = detectSkillsFromContent(transformed);
+          return {
+            ...transformed,
+            requiredSkills: detectedSkills
+          };
+        });
+        console.log('🔄 Transformed work items with skill detection:', transformedWorkItems.length);
+        console.log('🔍 Work items details:', transformedWorkItems.map(w => ({id: w.id, title: w.title.substring(0, 30), skills: w.requiredSkills})));
         
         // Epic work items (converted via "Add to Work Items") should stay in Work Items tab
         console.log('🎯 Final work items to store:', transformedWorkItems.length);

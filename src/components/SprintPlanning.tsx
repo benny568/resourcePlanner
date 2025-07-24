@@ -49,8 +49,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Only cleanup if no specific handler already handled the drop
       if (draggedItem && !dropHandledRef.current) {
         console.log('🔄 Global pointer up - resetting drag state');
+        
+        // Remove blue border from ALL sprint containers immediately
+        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+          htmlEl.classList.add('border', 'border-gray-200');
+          htmlEl.style.minHeight = 'auto';
+          htmlEl.style.cursor = 'default';
+        });
+        
         setDraggedItem(null);
         setHideDropZones(false);
+        
         // Reset any stuck visual states
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
@@ -66,8 +77,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Only cancel drag when actually leaving the browser window
       if (draggedItem) {
         console.log('🔄 Window left: resetting drag state');
+        
+        // Remove blue border from ALL sprint containers immediately
+        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+          htmlEl.classList.add('border', 'border-gray-200');
+          htmlEl.style.minHeight = 'auto';
+          htmlEl.style.cursor = 'default';
+        });
+        
         setDraggedItem(null);
         setHideDropZones(false);
+        
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
           el.style.transform = 'scale(1)';
@@ -390,18 +412,90 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         return;
       }
       
+                  // Determine work item skill based on title and description content (per workspace rules)
+            let updatedWorkItem = { ...workItem };
+            const title = workItem.title?.toLowerCase() || '';
+            const description = workItem.description?.toLowerCase() || '';
+            
+            // Check for explicit skill indicators in title (more reliable)
+            const titleHasBackend = title.includes('be:') || title.includes('backend');
+            const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
+            
+            // Check if title or description contains BE or FE indicators
+            const hasBackendIndicator = title.includes('be') || description.includes('be');
+            const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
+            
+            // Apply automatic skill determination - prioritize title over description
+            if (titleHasFrontend && !titleHasBackend) {
+              // Title explicitly indicates frontend
+              console.log(`🎯 Auto-detected Frontend skill from title: "${workItem.title}"`);
+              updatedWorkItem = {
+                ...updatedWorkItem,
+                requiredSkills: ['frontend']
+              };
+            } else if (titleHasBackend && !titleHasFrontend) {
+              // Title explicitly indicates backend
+              console.log(`🎯 Auto-detected Backend skill from title: "${workItem.title}"`);
+              updatedWorkItem = {
+                ...updatedWorkItem,
+                requiredSkills: ['backend']
+              };
+            } else if (hasBackendIndicator && !hasFrontendIndicator) {
+              // Fall back to description analysis - backend only
+              console.log(`🎯 Auto-detected Backend skill from description: "${workItem.title}" / "${workItem.description}"`);
+              updatedWorkItem = {
+                ...updatedWorkItem,
+                requiredSkills: ['backend']
+              };
+            } else if (hasFrontendIndicator && !hasBackendIndicator) {
+              // Fall back to description analysis - frontend only
+              console.log(`🎯 Auto-detected Frontend skill from description: "${workItem.title}" / "${workItem.description}"`);
+              updatedWorkItem = {
+                ...updatedWorkItem,
+                requiredSkills: ['frontend']
+              };
+            } else if (!titleHasFrontend && !titleHasBackend && !hasBackendIndicator && !hasFrontendIndicator && updatedWorkItem.requiredSkills.length > 1) {
+        // No BE/FE indicators in title or description and currently has both skills → Ask user
+        const userChoice = prompt(
+          `Cannot auto-determine skill for "${workItem.title}".\n\n` +
+          `Title: "${workItem.title}"\n` +
+          `Description: "${workItem.description}"\n\n` +
+          `Please specify the required skill:\n` +
+          `Type "FE" for Frontend or "BE" for Backend:`
+        );
+        
+        if (userChoice?.toLowerCase() === 'fe' || userChoice?.toLowerCase() === 'frontend') {
+          console.log(`👤 User selected Frontend skill for: "${workItem.title}"`);
+          updatedWorkItem = {
+            ...updatedWorkItem,
+            requiredSkills: ['frontend']
+          };
+        } else if (userChoice?.toLowerCase() === 'be' || userChoice?.toLowerCase() === 'backend') {
+          console.log(`👤 User selected Backend skill for: "${workItem.title}"`);
+          updatedWorkItem = {
+            ...updatedWorkItem,
+            requiredSkills: ['backend']
+          };
+        } else {
+          // User cancelled or provided invalid input
+          console.log(`❌ Invalid skill selection, keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
+          alert(`Invalid selection. Keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
+        }
+      }
+      // If both BE and FE indicators are present, or already has single skill, keep existing skills
+      
       const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
       
       // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
-      if (workItem && sprintInfo) {
+      if (updatedWorkItem && sprintInfo) {
         // Check dependencies first
-        if (!canWorkItemStartInSprint(workItem, sprintInfo.sprint, data.workItems, data.sprints)) {
-          const blockedBy = workItem.dependencies
+        if (!canWorkItemStartInSprint(updatedWorkItem, sprintInfo.sprint, data.workItems, data.sprints)) {
+          const blockedBy = updatedWorkItem.dependencies
             .map(depId => data.workItems.find(w => w.id === depId))
             .filter(dep => dep && dep.status !== 'Completed')
             .map(dep => dep!.title);
           
-          const message = `Cannot assign "${workItem.title}": Dependencies not satisfied.`;
+          const message = `Cannot assign "${updatedWorkItem.title}": Dependencies not satisfied.`;
           console.log(`❌ ${message} Blocked by: ${blockedBy.join(', ')}`);
           alert(`❌ ${message}\n\nBlocked by: ${blockedBy.join(', ')}`);
           
@@ -415,16 +509,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           return;
         }
         
-        // Check skill capacity
-        const canAssign = canWorkItemBeAssignedToSprint(workItem, {
+        // Check skill capacity using the updated work item skills
+        const canAssign = canWorkItemBeAssignedToSprint(updatedWorkItem, {
           frontend: sprintInfo.availableFrontendCapacity,
           backend: sprintInfo.availableBackendCapacity
         });
         
         if (!canAssign) {
-          const message = `Cannot assign "${workItem.title}": Insufficient ${workItem.requiredSkills.join(' and ')} capacity in this sprint.`;
+          const message = `Cannot assign "${updatedWorkItem.title}": Insufficient ${updatedWorkItem.requiredSkills.join(' and ')} capacity in this sprint.`;
           console.log(`❌ ${message}`);
-          alert(`❌ ${message}\n\nItem needs: ${workItem.estimateStoryPoints} pts\nAvailable: Frontend ${sprintInfo.availableFrontendCapacity.toFixed(1)} pts, Backend ${sprintInfo.availableBackendCapacity.toFixed(1)} pts`);
+          alert(`❌ ${message}\n\nItem needs: ${updatedWorkItem.estimateStoryPoints} pts (${updatedWorkItem.requiredSkills.join(' + ')})\nAvailable: Frontend ${sprintInfo.availableFrontendCapacity.toFixed(1)} pts, Backend ${sprintInfo.availableBackendCapacity.toFixed(1)} pts`);
           
           // Reset drag state when assignment fails
           setDraggedItem(null);
@@ -446,12 +540,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       
       if (isWorkItem || isEpicChild) {
         try {
+          // Save updated skills to database if they were modified
+          if (updatedWorkItem.requiredSkills !== workItem.requiredSkills) {
+            console.log(`💾 Saving updated skills to database: ${itemId} → ${updatedWorkItem.requiredSkills.join(', ')}`);
+            const workItemData = transformers.workItemToApi(updatedWorkItem);
+            await workItemsApi.update(itemId, workItemData);
+            console.log('✅ Work item skills updated in database');
+          }
+          
           console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
           await workItemsApi.assignToSprint(itemId, sprintId);
           console.log('✅ Sprint assignment saved to database');
         } catch (error) {
-          console.error('❌ Failed to save sprint assignment to database:', error);
-          alert('❌ Failed to save sprint assignment. Please try again.');
+          console.error('❌ Failed to save to database:', error);
+          alert('❌ Failed to save assignment. Please try again.');
           
           // Reset drag state when database save fails
           setDraggedItem(null);
@@ -483,6 +585,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         if (item.id === itemId) {
           return {
             ...item,
+            requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
             assignedSprints: item.assignedSprints.includes(sprintId) 
               ? item.assignedSprints 
               : [...item.assignedSprints, sprintId]
@@ -496,6 +599,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             const updatedChildren = [...item.children];
             updatedChildren[childIndex] = {
               ...updatedChildren[childIndex],
+              requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
               assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
                 ? updatedChildren[childIndex].assignedSprints
                 : [...updatedChildren[childIndex].assignedSprints, sprintId]
@@ -928,6 +1032,32 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             </div>
                             
                             {epic.children?.map((child, index) => {
+                              // Apply skill detection for epic children
+                              const title = child.title?.toLowerCase() || '';
+                              const description = child.description?.toLowerCase() || '';
+                              const hasBackendIndicator = title.includes('be') || description.includes('be');
+                              const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
+                              
+                              let detectedSkills = child.requiredSkills;
+                              
+                              // Check for explicit skill indicators in title (more reliable)
+                              const titleHasBackend = title.includes('be:') || title.includes('backend');
+                              const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
+                              
+                              if (titleHasFrontend && !titleHasBackend) {
+                                // Title explicitly indicates frontend
+                                detectedSkills = ['frontend'];
+                              } else if (titleHasBackend && !titleHasFrontend) {
+                                // Title explicitly indicates backend
+                                detectedSkills = ['backend'];
+                              } else if (hasBackendIndicator && !hasFrontendIndicator) {
+                                // Fall back to description analysis
+                                detectedSkills = ['backend'];
+                              } else if (hasFrontendIndicator && !hasBackendIndicator) {
+                                // Fall back to description analysis
+                                detectedSkills = ['frontend'];
+                              }
+                              
                               const isCompleted = child.status === 'Completed';
                               const isAssigned = child.assignedSprints.length > 0;
                               const isDraggable = !isAssigned && !isCompleted;
@@ -970,11 +1100,27 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         // Mark that this drop was handled by a specific handler
                                         dropHandledRef.current = true;
                                         
+                                        // Remove blue border from ALL sprint containers immediately
+                                        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+                                          const htmlEl = el as HTMLElement;
+                                          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+                                          htmlEl.classList.add('border', 'border-gray-200');
+                                          htmlEl.style.minHeight = 'auto';
+                                          htmlEl.style.cursor = 'default';
+                                        });
+                                        
                                         // Immediately hide drop zone visuals before state update
                                         setHideDropZones(true);
                                         
                                         // Clear drag state immediately to remove visual indicators
                                         setDraggedItem(null);
+                                        
+                                        // Reset any stuck visual states on dragged items
+                                        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
+                                          el.style.opacity = '1';
+                                          el.style.transform = 'scale(1)';
+                                          el.style.pointerEvents = 'auto';
+                                        });
                                         
                                         assignItemToSprint(child.id, sprintId);
                                         return;
@@ -1017,7 +1163,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                       <span>{child.estimateStoryPoints} pts</span>
                                       <div style={{ display: 'flex', gap: '4px' }}>
-                                        {child.requiredSkills.map(skill => (
+                                        {detectedSkills.map(skill => (
                                           <span 
                                             key={skill}
                                             style={{
@@ -1117,13 +1263,29 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   
                   const itemToAssign = draggedItem;
                   
+                  // Immediately remove blue border from THIS sprint container
+                  const currentTarget = e.currentTarget as HTMLElement;
+                  currentTarget.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+                  currentTarget.classList.add('border', 'border-gray-200');
+                  currentTarget.style.minHeight = 'auto';
+                  currentTarget.style.cursor = 'default';
+                  
+                  // Remove blue border from ALL sprint containers immediately
+                  document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+                    const htmlEl = el as HTMLElement;
+                    htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+                    htmlEl.classList.add('border', 'border-gray-200');
+                    htmlEl.style.minHeight = 'auto';
+                    htmlEl.style.cursor = 'default';
+                  });
+                  
                   // Immediately hide drop zone visuals before state update
                   setHideDropZones(true);
                   
                   // Clear drag state immediately to remove visual indicators
                   setDraggedItem(null);
                   
-                  // Reset any stuck visual states
+                  // Reset any stuck visual states on dragged items
                   document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
                     el.style.opacity = '1';
                     el.style.transform = 'scale(1)';
