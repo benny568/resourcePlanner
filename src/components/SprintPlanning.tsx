@@ -25,6 +25,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+  const [hideDropZones, setHideDropZones] = useState(false);
   const processingAssignmentRef = React.useRef(false);
   const processingRemovalRef = React.useRef(false);
   const dropHandledRef = React.useRef(false);
@@ -49,6 +50,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (draggedItem && !dropHandledRef.current) {
         console.log('🔄 Global pointer up - resetting drag state');
         setDraggedItem(null);
+        setHideDropZones(false);
         // Reset any stuck visual states
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
@@ -65,6 +67,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (draggedItem) {
         console.log('🔄 Window left: resetting drag state');
         setDraggedItem(null);
+        setHideDropZones(false);
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
           el.style.transform = 'scale(1)';
@@ -704,6 +707,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             
                             addDebugEvent(`🎯 DRAGGING: "${item.title}"`);
                             setDraggedItem(item.id);
+                            setHideDropZones(false); // Reset flag for new drag operation
                             e.currentTarget.style.opacity = '0.7';
                             e.currentTarget.style.transform = 'scale(0.98)';
                             e.currentTarget.style.pointerEvents = 'none';
@@ -937,6 +941,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                     
                                     console.log(`🎯 DRAGGING EPIC CHILD: "${child.title}"`);
                                     setDraggedItem(child.id);
+                                    setHideDropZones(false); // Reset flag for new drag operation
                                     const target = e.currentTarget as HTMLElement;
                                     target.style.opacity = '0.7';
                                     target.style.transform = 'scale(0.98)';
@@ -961,6 +966,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         console.log(`🎯 SUCCESS! Epic child "${child.title}" assigned to sprint`);
                                         e.stopPropagation();
                                         e.preventDefault();
+                                        
+                                        // Mark that this drop was handled by a specific handler
+                                        dropHandledRef.current = true;
+                                        
+                                        // Immediately hide drop zone visuals before state update
+                                        setHideDropZones(true);
+                                        
+                                        // Clear drag state immediately to remove visual indicators
+                                        setDraggedItem(null);
+                                        
                                         assignItemToSprint(child.id, sprintId);
                                         return;
                                       }
@@ -1102,6 +1117,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   
                   const itemToAssign = draggedItem;
                   
+                  // Immediately hide drop zone visuals before state update
+                  setHideDropZones(true);
+                  
                   // Clear drag state immediately to remove visual indicators
                   setDraggedItem(null);
                   
@@ -1117,20 +1135,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 }
               }}
               className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${
-                draggedItem 
+                (draggedItem && !hideDropZones)
                   ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200' 
                   : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
               }`}
               style={{
-                minHeight: draggedItem ? '200px' : 'auto',
+                minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
                 position: 'relative',
                 pointerEvents: 'auto',
                 zIndex: 10,
-                cursor: draggedItem ? 'copy' : 'default'
+                cursor: (draggedItem && !hideDropZones) ? 'copy' : 'default'
               }}
                           >
                 {/* Minimal drop zone indicator when dragging */}
-                {draggedItem && (
+                {(draggedItem && !hideDropZones) && (
                   <div 
                     className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-20 rounded-lg z-10"
                     style={{ pointerEvents: 'none' }}
