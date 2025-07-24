@@ -22,6 +22,8 @@ interface AppData {
 }
 
 function App() {
+  console.log('🚀 App: Component initialized');
+  
   const [activeTab, setActiveTab] = useState('dashboard');
   const [data, setData] = useState<AppData>({
     teamMembers: [],
@@ -468,7 +470,10 @@ function App() {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    console.log('🚀 App: Tab clicked', tab.id);
+                    setActiveTab(tab.id);
+                  }}
                   className={`flex items-center gap-2 py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap ${
                     activeTab === tab.id
                       ? 'border-blue-500 text-blue-600'
@@ -512,11 +517,18 @@ function App() {
           />
         )}
         {activeTab === 'sprints' && (
-          <SprintPlanning
-            data={data}
-            onUpdateSprints={updateSprints}
-            onUpdateWorkItems={updateWorkItems}
-          />
+          <>
+            {console.log('🚀 App: Rendering SprintPlanning component', { 
+              workItems: data.workItems.length, 
+              sprints: data.sprints.length,
+              activeTab 
+            })}
+            <SprintPlanning
+              data={data}
+              onUpdateSprints={updateSprints}
+              onUpdateWorkItems={updateWorkItems}
+            />
+          </>
         )}
         {activeTab === 'holidays' && (
           <HolidayManagement
