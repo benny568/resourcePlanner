@@ -4,7 +4,7 @@ import { TeamMember, WorkItem, Epic } from '../types';
 import { JiraIntegrationService, jiraIntegration } from '../services/jiraIntegration';
 
 interface JiraImportProps {
-  onImportComplete: (data: { teamMembers: TeamMember[], workItems: WorkItem[], epics?: Epic[] }) => void;
+  onImportComplete: (data: { teamMembers: TeamMember[], workItems: WorkItem[], epics?: Epic[], isPartialImport?: boolean, pagination?: { limit: number, startAt: number, total: number, hasMore: boolean } }) => void;
 }
 
 export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
@@ -26,6 +26,11 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
   const [epicImportStatus, setEpicImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
   const [epicErrorMessage, setEpicErrorMessage] = useState<string>('');
   const [epicImportResults, setEpicImportResults] = useState<{ epicsCount: number, childrenCount: number } | null>(null);
+
+  // Epic pagination state
+  const [epics, setEpics] = useState<Epic[]>([]);
+  const [pagination, setPagination] = useState<{ limit: number, startAt: number, total: number, hasMore: boolean } | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Single epic import state
   const [epicKey, setEpicKey] = useState('');
@@ -100,18 +105,23 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
     setEpicImportStatus('importing');
     setEpicErrorMessage('');
     setEpicImportResults(null);
+    
+    // Reset pagination state for fresh import
+    setEpics([]);
+    setPagination(null);
 
     try {
       console.log(`🚀 Starting Epic import from project: ${projectKey}`);
       
-      let epics: Epic[] = [];
+      let loadedEpics: Epic[] = [];
+      let paginationData: { limit: number, startAt: number, total: number, hasMore: boolean } | null = null;
       
       try {
-        // Try the regular epic import first
+        // Try the regular epic import first (start with first page)
         const response = await fetch('/api/jira/epics-with-children', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectKey })
+          body: JSON.stringify({ projectKey, limit: 25, startAt: 0 })
         });
         
         if (response.status === 503) {
@@ -180,27 +190,41 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
             throw new Error(`AI import failed: ${aiResponse.status} ${aiResponse.statusText}`);
           }
           
-          epics = await aiResponse.json();
-          console.log(`🤖 Successfully imported ${epics.length} epics using AI assistant`);
+          loadedEpics = await aiResponse.json();
+          console.log(`🤖 Successfully imported ${loadedEpics.length} epics using AI assistant`);
         } else if (!response.ok) {
           throw new Error(`Failed to import epics: ${response.status} ${response.statusText}`);
         } else {
-          epics = await response.json();
+          const responseData = await response.json();
+          // Handle paginated response format
+          if (responseData.epics && Array.isArray(responseData.epics)) {
+            loadedEpics = responseData.epics;
+            paginationData = responseData.pagination;
+            console.log(`📄 Received paginated response: ${loadedEpics.length} epics (page 1 of ${Math.ceil(responseData.pagination.total / responseData.pagination.limit)})`);
+          } else {
+            // Handle legacy array response format for backwards compatibility
+            loadedEpics = responseData;
+          }
         }
       } catch (fetchError) {
         console.error('❌ Epic import failed:', fetchError);
         throw fetchError;
       }
       
+      // Update state with loaded epics and pagination
+      setEpics(loadedEpics);
+      setPagination(paginationData);
+      
       setEpicImportResults({
-        epicsCount: epics.length,
-        childrenCount: epics.reduce((total, epic) => total + epic.children.length, 0)
+        epicsCount: loadedEpics.length,
+        childrenCount: loadedEpics.reduce((total, epic) => total + epic.children.length, 0)
       });
       
       setEpicImportStatus('success');
-      onImportComplete({ teamMembers: [], workItems: [], epics });
+      // Call onImportComplete to update epics display, but mark as partial import to prevent modal
+      onImportComplete({ teamMembers: [], workItems: [], epics: loadedEpics, isPartialImport: true, pagination: paginationData || undefined });
       
-      console.log(`✅ Epic import completed successfully with ${epics.length} epics`);
+      console.log(`✅ Epic import completed successfully with ${loadedEpics.length} epics`);
       
     } catch (error) {
       console.error('❌ Epic import failed:', error);
@@ -208,6 +232,65 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       setEpicImportStatus('error');
     } finally {
       setIsEpicImporting(false);
+    }
+  };
+
+  const handleLoadMoreEpics = async () => {
+    if (!pagination?.hasMore || isLoadingMore) return;
+
+    setIsLoadingMore(true);
+
+    try {
+      console.log(`📄 Loading more epics: page ${Math.floor(pagination.startAt / pagination.limit) + 2}`);
+
+      const response = await fetch('/api/jira/epics-with-children', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectKey, 
+          limit: pagination.limit, 
+          startAt: pagination.startAt + pagination.limit 
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load more epics: ${response.status} ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
+      
+      if (responseData.epics && Array.isArray(responseData.epics)) {
+        const newEpics = responseData.epics;
+        const updatedEpics = [...epics, ...newEpics];
+        
+        // Update state with combined epics and new pagination data
+        setEpics(updatedEpics);
+        setPagination(responseData.pagination);
+        
+        // Update the epic import results to reflect total loaded
+        setEpicImportResults({
+          epicsCount: updatedEpics.length,
+          childrenCount: updatedEpics.reduce((total, epic) => total + epic.children.length, 0)
+        });
+        
+        // Update the app with all loaded epics as partial import
+        onImportComplete({ teamMembers: [], workItems: [], epics: updatedEpics, isPartialImport: true, pagination: responseData.pagination });
+        
+        // Auto-finalize if no more epics available
+        if (!responseData.pagination.hasMore) {
+          setTimeout(() => {
+            onImportComplete({ teamMembers: [], workItems: [], epics: updatedEpics, pagination: responseData.pagination });
+          }, 500);
+        }
+        
+        console.log(`✅ Loaded ${newEpics.length} more epics. Total: ${updatedEpics.length}/${responseData.pagination.total}`);
+      }
+
+    } catch (error) {
+      console.error('❌ Load more epics failed:', error);
+      setEpicErrorMessage(error instanceof Error ? error.message : 'Failed to load more epics');
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -479,10 +562,20 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
               <div className="space-y-1">
                 <div className="flex items-center gap-2 text-xs text-green-700">
                   <span>📁 {epicImportResults.epicsCount} epics</span>
+                  {pagination && (
+                    <span className="text-gray-500">
+                      of {pagination.total} total
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 text-xs text-green-700">
                   <span>📝 {epicImportResults.childrenCount} child tickets</span>
                 </div>
+                {pagination?.hasMore && (
+                  <div className="flex items-center gap-1 text-xs text-blue-600 mt-2">
+                    <span>💡 Go to the Epics tab to load more epics</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

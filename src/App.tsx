@@ -39,6 +39,9 @@ function App() {
   });
   const [isApiConnected, setIsApiConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Epic pagination state (global to persist across tab switches)
+  const [epicPagination, setEpicPagination] = useState<{ limit: number, startAt: number, total: number, hasMore: boolean } | null>(null);
 
   // Check API connection
   const checkApiConnection = async () => {
@@ -284,7 +287,7 @@ function App() {
   };
 
   // Handle Jira import completion
-  const handleJiraImport = async (importedData: { teamMembers: TeamMember[]; workItems: WorkItem[]; epics?: Epic[] }) => {
+  const handleJiraImport = async (importedData: { teamMembers: TeamMember[]; workItems: WorkItem[]; epics?: Epic[], isPartialImport?: boolean, pagination?: { limit: number, startAt: number, total: number, hasMore: boolean } }) => {
     try {
       console.log('🔄 Processing Jira import data...');
       console.log(`📊 Importing: ${importedData.teamMembers.length} team members, ${importedData.workItems.length} work items, ${importedData.epics?.length || 0} epics`);
@@ -418,6 +421,11 @@ function App() {
         
         // Simply add new epics (no backend persistence for now)
         mergedEpics = [...data.epics, ...newEpics];
+        
+        // Update pagination state if provided
+        if (importedData.pagination) {
+          setEpicPagination(importedData.pagination);
+        }
       }
       
       // Update local state with merged data
@@ -428,27 +436,71 @@ function App() {
         epics: mergedEpics
       }));
       
-      // Switch to appropriate tab to see imported data
-      if (importedData.epics && importedData.epics.length > 0) {
-        setActiveTab('epics');
-      } else {
-        setActiveTab('work-items');
+      // Switch to appropriate tab to see imported data (only for final imports)
+      if (!importedData.isPartialImport) {
+        if (importedData.epics && importedData.epics.length > 0) {
+          setActiveTab('epics');
+        } else {
+          setActiveTab('work-items');
+        }
       }
       
       const epicCount = importedData.epics?.length || 0;
       console.log(`✅ Jira import processed: +${savedTeamMembers.length} new team members, +${savedWorkItems.length} new work items, +${epicCount} epics, ~${updatedWorkItems.length} updated work items`);
       
-      // Show summary alert
-      let alertMessage = `Jira Import Complete!\n\n✅ Added ${savedTeamMembers.length} new team members\n✅ Added ${savedWorkItems.length} new work items`;
-      if (epicCount > 0) {
-        alertMessage += `\n📁 Imported ${epicCount} epics (displayed only - use "Add to Work Items" to save)`;
+      // Show summary alert only for final imports, not partial imports
+      if (!importedData.isPartialImport) {
+        let alertMessage = `Jira Import Complete!\n\n✅ Added ${savedTeamMembers.length} new team members\n✅ Added ${savedWorkItems.length} new work items`;
+        if (epicCount > 0) {
+          alertMessage += `\n📁 Imported ${epicCount} epics (displayed only - use "Add to Work Items" to save)`;
+        }
+        alertMessage += `\n🔄 Updated ${updatedWorkItems.length} existing work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`;
+        alert(alertMessage);
       }
-      alertMessage += `\n🔄 Updated ${updatedWorkItems.length} existing work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`;
-      alert(alertMessage);
       
     } catch (error) {
       console.error('❌ Failed to process Jira import:', error);
       alert(`Failed to process Jira import: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Handle loading more epics (called from EpicsManagement)
+  const handleLoadMoreEpics = async () => {
+    if (!epicPagination?.hasMore) return;
+
+    try {
+      console.log(`📄 Loading more epics: page ${Math.floor(epicPagination.startAt / epicPagination.limit) + 2}`);
+
+      const response = await fetch('/api/jira/epics-with-children', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectKey: 'REF', 
+          limit: epicPagination.limit, 
+          startAt: epicPagination.startAt + epicPagination.limit 
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load more epics: ${response.status} ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
+      
+      if (responseData.epics && Array.isArray(responseData.epics)) {
+        const newEpics = responseData.epics;
+        const updatedEpics = [...data.epics, ...newEpics];
+        
+        // Update epics and pagination state
+        setData(prev => ({ ...prev, epics: updatedEpics }));
+        setEpicPagination(responseData.pagination);
+
+        console.log(`✅ Loaded ${newEpics.length} more epics. Total: ${updatedEpics.length}/${responseData.pagination.total}`);
+        return updatedEpics.length;
+      }
+    } catch (error) {
+      console.error('❌ Load more epics failed:', error);
+      throw error;
     }
   };
 
@@ -554,6 +606,8 @@ function App() {
               const updatedWorkItems = updater(data.workItems);
               updateWorkItems(updatedWorkItems);
             }}
+            pagination={epicPagination}
+            onLoadMoreEpics={handleLoadMoreEpics}
           />
         )}
         {activeTab === 'sprints' && (

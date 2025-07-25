@@ -1,20 +1,25 @@
 import React, { useState } from 'react';
 import { Epic, WorkItem } from '../types';
-import { ChevronDown, ChevronRight, Briefcase, CheckCircle, Clock, AlertCircle, ExternalLink, Trash2, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Briefcase, CheckCircle, Clock, AlertCircle, ExternalLink, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import { workItemsApi, transformers } from '../services/api';
 
 interface EpicsManagementProps {
   epics: Epic[];
   onUpdateEpics: (epics: Epic[]) => void;
   onUpdateWorkItems?: (updater: (prevWorkItems: WorkItem[]) => WorkItem[]) => void;
+  pagination?: { limit: number, startAt: number, total: number, hasMore: boolean } | null;
+  onLoadMoreEpics?: () => Promise<number | void>;
 }
 
 export const EpicsManagement: React.FC<EpicsManagementProps> = ({
   epics,
   onUpdateEpics,
-  onUpdateWorkItems
+  onUpdateWorkItems,
+  pagination,
+  onLoadMoreEpics
 }) => {
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const toggleEpicExpansion = (epicId: string) => {
     const newExpanded = new Set(expandedEpics);
@@ -24,6 +29,19 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
       newExpanded.add(epicId);
     }
     setExpandedEpics(newExpanded);
+  };
+
+  const handleLoadMoreEpics = async () => {
+    if (!onLoadMoreEpics || !pagination?.hasMore || isLoadingMore) return;
+
+    setIsLoadingMore(true);
+    try {
+      await onLoadMoreEpics();
+    } catch (error) {
+      console.error('❌ Failed to load more epics:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
   const deleteEpic = async (epicId: string, epicTitle: string) => {
@@ -449,6 +467,40 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
           );
         })}
       </div>
+
+      {/* Load More Section */}
+      {pagination && (
+        <div className="mt-6 pt-4 border-t">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm text-gray-600">
+              Showing {epics.length} of {pagination.total} epics
+            </div>
+            {pagination.hasMore && (
+              <button
+                onClick={handleLoadMoreEpics}
+                disabled={isLoadingMore}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  isLoadingMore
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {isLoadingMore ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <MoreHorizontal className="h-4 w-4" />
+                    Load More Epics ({pagination.total - epics.length} remaining)
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 
