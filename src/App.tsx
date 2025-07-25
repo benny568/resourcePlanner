@@ -7,7 +7,8 @@ import { SprintPlanning } from './components/SprintPlanning';
 import { HolidayManagement } from './components/HolidayManagement';
 import { SprintConfiguration } from './components/SprintConfiguration';
 import { JiraImport } from './components/JiraImport';
-import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3 } from 'lucide-react';
+import { DeliveryForecast } from './components/DeliveryForecast';
+import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3, Target } from 'lucide-react';
 import { TeamMember, WorkItem, Epic, Sprint, PublicHoliday, SprintConfig } from './types';
 import { generateSprintsForYear } from './utils/dateUtils';
 import { teamMembersApi, workItemsApi, sprintsApi, holidaysApi, sprintConfigApi, transformers } from './services/api';
@@ -25,6 +26,7 @@ function App() {
   console.log('🚀 App: Component initialized');
   
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [targetDeliveryDate, setTargetDeliveryDate] = useState<Date | undefined>(undefined);
   const [data, setData] = useState<AppData>({
     teamMembers: [],
     workItems: [],
@@ -506,6 +508,7 @@ function App() {
 
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'delivery-forecast', label: 'Delivery Forecast', icon: Target },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'work-items', label: 'Work Items', icon: Briefcase },
     { id: 'epics', label: 'Epics', icon: Briefcase },
@@ -513,6 +516,7 @@ function App() {
     { id: 'holidays', label: 'Holidays', icon: CalendarIcon },
     { id: 'config', label: 'Configuration', icon: Settings },
     { id: 'jira-import', label: 'Import from Jira', icon: Download },
+    { id: 'delivery-forecast', label: 'Delivery Forecast', icon: Target },
   ];
 
   if (isLoading) {
@@ -641,6 +645,13 @@ function App() {
         {activeTab === 'jira-import' && (
           <JiraImport
             onImportComplete={handleJiraImport}
+          />
+        )}
+        {activeTab === 'delivery-forecast' && (
+          <DeliveryForecast
+            data={data}
+            targetDeliveryDate={targetDeliveryDate}
+            onSetTargetDeliveryDate={setTargetDeliveryDate}
           />
         )}
       </main>
