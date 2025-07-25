@@ -124,6 +124,11 @@ export const sprintsApi = {
       method: 'PUT',
       body: JSON.stringify(sprintData),
     }),
+  
+  delete: (id: string) =>
+    apiRequest<any>(`/sprints/${id}`, {
+      method: 'DELETE',
+    }),
 };
 
 // Public Holidays API

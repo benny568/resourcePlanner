@@ -8,9 +8,50 @@ import {
   addWeeks,
   startOfWeek,
   endOfWeek,
-  eachDayOfInterval
+  eachDayOfInterval,
+  getQuarter,
+  getYear
 } from 'date-fns';
 import { Sprint, SprintConfig, PublicHoliday, TeamMember, PersonalHoliday, Skill, WorkItem } from '../types';
+
+// Quarter utility functions
+export const getQuarterInfo = (date: Date) => {
+  const quarter = getQuarter(date);
+  const year = getYear(date);
+  return { quarter, year, quarterString: `Q${quarter} ${year}` };
+};
+
+export const groupSprintsByQuarter = (sprints: Sprint[]) => {
+  const groups: { [key: string]: Sprint[] } = {};
+  
+  sprints.forEach(sprint => {
+    const { quarterString } = getQuarterInfo(sprint.startDate);
+    if (!groups[quarterString]) {
+      groups[quarterString] = [];
+    }
+    groups[quarterString].push(sprint);
+  });
+  
+  // Sort quarters chronologically
+  const sortedQuarters = Object.keys(groups).sort((a, b) => {
+    const [aQ, aY] = a.split(' ');
+    const [bQ, bY] = b.split(' ');
+    const aYear = parseInt(aY);
+    const bYear = parseInt(bY);
+    const aQuarter = parseInt(aQ.replace('Q', ''));
+    const bQuarter = parseInt(bQ.replace('Q', ''));
+    
+    if (aYear !== bYear) return aYear - bYear;
+    return aQuarter - bQuarter;
+  });
+  
+  const result: { quarter: string; sprints: Sprint[] }[] = [];
+  sortedQuarters.forEach(quarter => {
+    result.push({ quarter, sprints: groups[quarter] });
+  });
+  
+  return result;
+};
 
 export const generateSprintsForYear = (config: SprintConfig, year: number = new Date().getFullYear()): Sprint[] => {
   const sprints: Sprint[] = [];
@@ -20,12 +61,25 @@ export const generateSprintsForYear = (config: SprintConfig, year: number = new 
   let currentSprintStart = config.firstSprintStartDate;
   let sprintNumber = 1;
   
+  // Track sprint numbers per quarter
+  const quarterSprintNumbers: { [key: string]: number } = {};
+  
   while (currentSprintStart <= yearEnd) {
     const sprintEnd = addDays(currentSprintStart, config.sprintDurationDays - 1);
+    const { quarterString } = getQuarterInfo(currentSprintStart);
+    
+    // Initialize or increment sprint number for this quarter
+    if (!quarterSprintNumbers[quarterString]) {
+      quarterSprintNumbers[quarterString] = 1;
+    } else {
+      quarterSprintNumbers[quarterString]++;
+    }
+    
+    const quarterSprintNumber = quarterSprintNumbers[quarterString];
     
     sprints.push({
       id: `sprint-${year}-${sprintNumber}`,
-      name: `Sprint ${sprintNumber} (${year})`,
+      name: `${quarterString} Sprint ${quarterSprintNumber}`,
       startDate: currentSprintStart,
       endDate: sprintEnd,
       plannedVelocity: config.defaultVelocity,

@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems } from '../utils/dateUtils';
-import { workItemsApi, transformers } from '../services/api';
+import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
+import { workItemsApi, transformers, sprintsApi } from '../services/api';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
@@ -201,7 +201,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Get upcoming sprints (not in the past)
   const upcomingSprints = data.sprints.filter(sprint => 
     !isBefore(sprint.endDate, new Date())
-  ).slice(0, 8); // Show next 8 sprints
+  ).slice(0, 12); // Show next 12 sprints to better showcase quarterly grouping
+
+  // Group sprints by quarter
+  const quarterGroups = useMemo(() => {
+    return groupSprintsByQuarter(upcomingSprints);
+  }, [upcomingSprints]);
 
   // Calculate sprint data with capacity and assignments
   const sprintData = useMemo(() => {
@@ -691,6 +696,38 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       setTimeout(() => {
         processingRemovalRef.current = false;
       }, 100);
+    }
+  };
+
+  // Archive a completed sprint
+  const archiveSprint = async (sprintId: string) => {
+    try {
+      const sprint = data.sprints.find(s => s.id === sprintId);
+      if (!sprint) {
+        alert('Sprint not found');
+        return;
+      }
+
+      // Confirm with user before archiving
+      const confirmMessage = `Are you sure you want to archive "${sprint.name}"?\n\nThis will remove it from the sprint planning view but preserve all historical data.`;
+      if (!confirm(confirmMessage)) {
+        return;
+      }
+
+      console.log(`📦 Archiving sprint: ${sprintId} ("${sprint.name}")`);
+      await sprintsApi.delete(sprintId);
+      console.log('✅ Sprint archived successfully');
+
+      // Remove the sprint from local state
+      const updatedSprints = data.sprints.filter(s => s.id !== sprintId);
+      onUpdateSprints(updatedSprints);
+
+      // Note: Work items assigned to this sprint will remain in the system
+      // but their sprint assignments will naturally be cleaned up by the UI
+      
+    } catch (error) {
+      console.error('❌ Failed to archive sprint:', error);
+      alert('❌ Failed to archive sprint. Please try again.');
     }
   };
 
@@ -1206,171 +1243,215 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         </div>
 
         {/* Sprint Capacity Overview */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-6">
           <h3 className="text-lg font-semibold">Sprint Assignments</h3>
           
-          {sprintData.map(({ 
-            sprint, 
-            assignedItems, 
-            assignedPoints, 
-            capacity, 
-            utilization,
-            skillCapacities,
-            frontendPoints,
-            backendPoints,
-            frontendUtilization,
-            backendUtilization
-          }) => (
-            <div
-              key={sprint.id}
-              data-sprint-id={sprint.id}
-              onPointerUp={(e) => {
-                // Always clear drag start on pointer up
-                setDragStart(null);
-                
-                if (draggedItem) {
-                  addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
-                  e.stopPropagation(); // Prevent global pointerup from running too early
-                  
-                  // Mark that this drop was handled by a specific handler
-                  dropHandledRef.current = true;
-                  
-                  const itemToAssign = draggedItem;
-                  
-                  // Assign to sprint (global handler will clean up visual state)
-                  assignItemToSprint(itemToAssign, sprint.id);
-                }
-              }}
-              className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${
-                (draggedItem && !hideDropZones)
-                  ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200' 
-                  : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
-              }`}
-              style={{
-                minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
-                position: 'relative',
-                pointerEvents: 'auto',
-                zIndex: 10,
-                cursor: (draggedItem && !hideDropZones) ? 'copy' : 'default'
-              }}
-                          >
-                {/* Minimal drop zone indicator when dragging */}
-                {(draggedItem && !hideDropZones) && (
-                  <div 
-                    className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-20 rounded-lg z-10"
-                    style={{ pointerEvents: 'none' }}
-                  >
-                    <div className="text-blue-600 font-normal text-sm text-center opacity-60">
-                      Drop here
-                    </div>
-                  </div>
-                )}
-
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h4 className="font-semibold">{sprint.name}</h4>
-                  <p className="text-sm text-gray-600">
-                    {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className={`font-semibold ${getUtilizationColor(utilization)}`}>
-                    {utilization.toFixed(0)}% utilized
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    {assignedPoints} / {capacity.toFixed(1)} pts
-                  </div>
-                </div>
+          {quarterGroups.map(({ quarter, sprints }) => (
+            <div key={quarter} className="space-y-4">
+              {/* Quarter Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-px bg-gradient-to-r from-blue-300 to-transparent flex-1"></div>
+                <h4 className="text-md font-semibold text-blue-700 bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
+                  {quarter}
+                </h4>
+                <div className="h-px bg-gradient-to-l from-blue-300 to-transparent flex-1"></div>
               </div>
-
-              {/* Skill-specific capacity */}
-              <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
-                <div className="bg-purple-50 p-2 rounded">
-                  <div className="font-medium text-purple-800">Frontend</div>
-                  <div className={`${getUtilizationColor(frontendUtilization)}`}>
-                    {frontendUtilization.toFixed(0)}% ({frontendPoints} / {skillCapacities.frontend.toFixed(1)} pts)
-                  </div>
-                </div>
-                <div className="bg-orange-50 p-2 rounded">
-                  <div className="font-medium text-orange-800">Backend</div>
-                  <div className={`${getUtilizationColor(backendUtilization)}`}>
-                    {backendUtilization.toFixed(0)}% ({backendPoints} / {skillCapacities.backend.toFixed(1)} pts)
-                  </div>
-                </div>
-              </div>
-
-              {/* Capacity bar */}
-              <div className="mb-3">
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-300 ${getCapacityBarColor(utilization)}`}
-                    style={{ width: `${Math.min(utilization, 100)}%` }}
-                  />
-                </div>
-                {utilization > 100 && (
-                  <div className="text-xs text-red-600 mt-1">
-                    Over capacity by {(assignedPoints - capacity).toFixed(1)} points
-                  </div>
-                )}
-              </div>
-
-              {/* Assigned items */}
-              <div className="space-y-2">
-                {assignedItems.length === 0 ? (
-                  <div 
-                    className="text-gray-500 text-sm italic py-2 text-center border-2 border-dashed border-gray-200 rounded"
-                    style={{ pointerEvents: 'none' }}
-                  >
-                    Drop work items here or click Auto-Assign
-                  </div>
-                ) : (
-                  assignedItems.map(item => (
-                    <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
-                      <div>
-                        <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
-                        <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                          e.preventDefault();
-                          e.stopPropagation();
-                          removeItemFromSprint(item.id, sprint.id);
-                        }}
-                        onPointerDown={(e) => {
-                          // Prevent any pointer events from triggering drag
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        onPointerUp={(e) => {
-                          // Prevent any pointer events from triggering drag
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                        style={{ pointerEvents: 'auto', zIndex: 1000 }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Warnings */}
-              {utilization > 100 && (
-                <div className="mt-3 p-2 bg-red-50 text-red-800 rounded flex items-center gap-2 text-sm">
-                  <AlertTriangle className="h-4 w-4" />
-                  Sprint is over-allocated. Consider moving items to later sprints.
-                </div>
-              )}
               
-              {utilization < 70 && assignedItems.length > 0 && (
-                <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 rounded flex items-center gap-2 text-sm">
-                  <AlertTriangle className="h-4 w-4" />
-                  Sprint has available capacity. Consider adding more items.
-                </div>
-              )}
+              {/* Sprints in this quarter */}
+              <div className="space-y-4 pl-4">
+                {sprints.map(sprint => {
+                  const sprintInfo = sprintData.find(sd => sd.sprint.id === sprint.id);
+                  if (!sprintInfo) return null;
+                  
+                  const { 
+                    assignedItems, 
+                    assignedPoints, 
+                    capacity, 
+                    utilization,
+                    skillCapacities,
+                    frontendPoints,
+                    backendPoints,
+                    frontendUtilization,
+                    backendUtilization
+                  } = sprintInfo;
+                  
+                  return (
+                    <div
+                      key={sprint.id}
+                      data-sprint-id={sprint.id}
+                      onPointerUp={(e) => {
+                        // Always clear drag start on pointer up
+                        setDragStart(null);
+                        
+                        if (draggedItem) {
+                          addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
+                          e.stopPropagation(); // Prevent global pointerup from running too early
+                          
+                          // Mark that this drop was handled by a specific handler
+                          dropHandledRef.current = true;
+                          
+                          const itemToAssign = draggedItem;
+                          
+                          // Assign to sprint (global handler will clean up visual state)
+                          assignItemToSprint(itemToAssign, sprint.id);
+                        }
+                      }}
+                      className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${
+                        (draggedItem && !hideDropZones)
+                          ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200' 
+                          : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
+                      }`}
+                      style={{
+                        minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
+                        position: 'relative',
+                        pointerEvents: 'auto',
+                        zIndex: 10,
+                        cursor: (draggedItem && !hideDropZones) ? 'copy' : 'default'
+                      }}
+                    >
+                      {/* Minimal drop zone indicator when dragging */}
+                      {(draggedItem && !hideDropZones) && (
+                        <div 
+                          className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-20 rounded-lg z-10"
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          <div className="text-blue-600 font-normal text-sm text-center opacity-60">
+                            Drop here
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold">{sprint.name}</h4>
+                            {isBefore(sprint.endDate, new Date()) && (
+                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
+                                Completed
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600">
+                            {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
+                          </p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="text-right">
+                            <div className={`font-semibold ${getUtilizationColor(utilization)}`}>
+                              {utilization.toFixed(0)}% utilized
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {assignedPoints} / {capacity.toFixed(1)} pts
+                            </div>
+                          </div>
+                          {/* Archive button for completed sprints */}
+                          {isBefore(sprint.endDate, new Date()) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                archiveSprint(sprint.id);
+                              }}
+                              className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                              title={`Archive sprint "${sprint.name}"`}
+                            >
+                              <Archive className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Skill-specific capacity */}
+                      <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
+                        <div className="bg-purple-50 p-2 rounded">
+                          <div className="font-medium text-purple-800">Frontend</div>
+                          <div className={`${getUtilizationColor(frontendUtilization)}`}>
+                            {frontendUtilization.toFixed(0)}% ({frontendPoints} / {skillCapacities.frontend.toFixed(1)} pts)
+                          </div>
+                        </div>
+                        <div className="bg-orange-50 p-2 rounded">
+                          <div className="font-medium text-orange-800">Backend</div>
+                          <div className={`${getUtilizationColor(backendUtilization)}`}>
+                            {backendUtilization.toFixed(0)}% ({backendPoints} / {skillCapacities.backend.toFixed(1)} pts)
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Capacity bar */}
+                      <div className="mb-3">
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full transition-all duration-300 ${getCapacityBarColor(utilization)}`}
+                            style={{ width: `${Math.min(utilization, 100)}%` }}
+                          />
+                        </div>
+                        {utilization > 100 && (
+                          <div className="text-xs text-red-600 mt-1">
+                            Over capacity by {(assignedPoints - capacity).toFixed(1)} points
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Assigned items */}
+                      <div className="space-y-2">
+                        {assignedItems.length === 0 ? (
+                          <div 
+                            className="text-gray-500 text-sm italic py-2 text-center border-2 border-dashed border-gray-200 rounded"
+                            style={{ pointerEvents: 'none' }}
+                          >
+                            Drop work items here or click Auto-Assign
+                          </div>
+                        ) : (
+                          assignedItems.map(item => (
+                            <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
+                              <div>
+                                <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
+                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  removeItemFromSprint(item.id, sprint.id);
+                                }}
+                                onPointerDown={(e) => {
+                                  // Prevent any pointer events from triggering drag
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                onPointerUp={(e) => {
+                                  // Prevent any pointer events from triggering drag
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                style={{ pointerEvents: 'auto', zIndex: 1000 }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Warnings */}
+                      {utilization > 100 && (
+                        <div className="mt-3 p-2 bg-red-50 text-red-800 rounded flex items-center gap-2 text-sm">
+                          <AlertTriangle className="h-4 w-4" />
+                          Sprint is over-allocated. Consider moving items to later sprints.
+                        </div>
+                      )}
+                      
+                      {utilization < 70 && assignedItems.length > 0 && (
+                        <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 rounded flex items-center gap-2 text-sm">
+                          <AlertTriangle className="h-4 w-4" />
+                          Sprint has available capacity. Consider adding more items.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </div>
