@@ -24,6 +24,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const [dragStart, setDragStart] = useState<{x: number, y: number, itemId: string} | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
   const processingAssignmentRef = React.useRef(false);
@@ -33,19 +34,51 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Debug function to track events (only essential events)
   const addDebugEvent = (event: string) => {
     // Only log critical success/error events to reduce console noise
-    if (event.includes('SUCCESS!') || event.includes('❌') || event.includes('DRAGGING:')) {
+    if (event.includes('SUCCESS!') || event.includes('❌')) {
       console.log(event);
     }
   };
 
   // Initialize drag and drop system  
   React.useEffect(() => {
-    addDebugEvent('🎯 Drag and Drop System Initialized');
+    console.log('🎯 NEW Drag and Drop System Initialized');
   }, []);
 
   // Global pointer handlers for cleanup (simplified and less aggressive)
   React.useEffect(() => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      // Check if we should start dragging based on mouse movement
+      if (dragStart && !draggedItem) {
+        const distance = Math.sqrt(
+          Math.pow(e.clientX - dragStart.x, 2) + 
+          Math.pow(e.clientY - dragStart.y, 2)
+        );
+        
+        console.log(`↔️ POINTER MOVE: Distance ${distance.toFixed(1)}px from start`);
+        
+        // Start drag when mouse moves more than 5 pixels
+        if (distance > 5) {
+          console.log(`🎯 DRAGGING: Starting drag for item "${dragStart.itemId}"`);
+          setDraggedItem(dragStart.itemId);
+          setHideDropZones(false);
+          
+          // Apply visual effects to the dragged item
+          const draggedElement = document.querySelector(`[data-item-id="${dragStart.itemId}"]`) as HTMLElement;
+          if (draggedElement) {
+            draggedElement.style.opacity = '0.7';
+            draggedElement.style.transform = 'scale(0.98)';
+            draggedElement.style.pointerEvents = 'none';
+          }
+        }
+      }
+    };
+
     const handleGlobalPointerUp = () => {
+      console.log(`🔼 POINTER UP: dragStart=${!!dragStart}, draggedItem=${!!draggedItem}`);
+      
+      // Always cleanup drag start state
+      setDragStart(null);
+      
       // Only cleanup if no specific handler already handled the drop
       if (draggedItem && !dropHandledRef.current) {
         console.log('🔄 Global pointer up - resetting drag state');
@@ -88,6 +121,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         });
         
         setDraggedItem(null);
+        setDragStart(null);
         setHideDropZones(false);
         
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
@@ -98,15 +132,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     };
 
-    // Only add handlers once, not dependent on draggedItem
+    // Add all pointer event handlers
+    document.addEventListener('pointermove', handleGlobalPointerMove);
     document.addEventListener('pointerup', handleGlobalPointerUp);
     window.addEventListener('blur', handleWindowLeave); // Window loses focus
     
     return () => {
+      document.removeEventListener('pointermove', handleGlobalPointerMove);
       document.removeEventListener('pointerup', handleGlobalPointerUp);
       window.removeEventListener('blur', handleWindowLeave);
     };
-  }, []); // Remove draggedItem dependency
+  }, [dragStart, draggedItem]); // Add dependencies for drag state
 
   // Toggle epic expansion
   const toggleEpicExpansion = (epicId: string) => {
@@ -358,57 +394,41 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     processingAssignmentRef.current = true;
 
     try {
-      // First, try to find the item in main work items array
-      let workItem = data.workItems.find(item => item.id === itemId);
+    // First, try to find the item in main work items array
+    let workItem = data.workItems.find(item => item.id === itemId);
+    
+    // If not found, search within epic children
+    if (!workItem) {
+      for (const epic of data.workItems.filter(item => item.isEpic)) {
+        const child = epic.children?.find(child => child.id === itemId);
+        if (child) {
+          workItem = child;
+          break;
+        }
+      }
       
-      // If not found, search within epic children
+      // Also search in regular Epic objects
       if (!workItem) {
-        for (const epic of data.workItems.filter(item => item.isEpic)) {
-          const child = epic.children?.find(child => child.id === itemId);
+        for (const epic of data.epics) {
+          const child = epic.children.find(child => child.id === itemId);
           if (child) {
             workItem = child;
             break;
           }
         }
-        
-        // Also search in regular Epic objects
-        if (!workItem) {
-          for (const epic of data.epics) {
-            const child = epic.children.find(child => child.id === itemId);
-            if (child) {
-              workItem = child;
-              break;
-            }
-          }
-        }
       }
-      
-      if (!workItem) {
-        console.error(`Work item ${itemId} not found`);
+    }
+    
+    if (!workItem) {
+      console.error(`Work item ${itemId} not found`);
         alert(`Work item not found. Please refresh the page and try again.`);
-        
-        // Reset drag state when assignment fails
-        setDraggedItem(null);
-        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-          el.style.opacity = '1';
-          el.style.transform = 'scale(1)';
-          el.style.pointerEvents = 'auto';
-        });
-        return;
-      }
+      return;
+    }
 
       // Check if already assigned to this sprint
       if (workItem.assignedSprints.includes(sprintId)) {
         console.log(`Item ${itemId} already assigned to sprint ${sprintId}`);
         alert(`"${workItem.title}" is already assigned to this sprint.`);
-        
-        // Reset drag state when assignment fails
-        setDraggedItem(null);
-        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-          el.style.opacity = '1';
-          el.style.transform = 'scale(1)';
-          el.style.pointerEvents = 'auto';
-        });
         return;
       }
       
@@ -483,53 +503,37 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         }
       }
       // If both BE and FE indicators are present, or already has single skill, keep existing skills
-      
-      const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
-      
-      // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
+    
+    const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
+    
+    // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
       if (updatedWorkItem && sprintInfo) {
-        // Check dependencies first
+      // Check dependencies first
         if (!canWorkItemStartInSprint(updatedWorkItem, sprintInfo.sprint, data.workItems, data.sprints)) {
           const blockedBy = updatedWorkItem.dependencies
-            .map(depId => data.workItems.find(w => w.id === depId))
-            .filter(dep => dep && dep.status !== 'Completed')
-            .map(dep => dep!.title);
-          
+          .map(depId => data.workItems.find(w => w.id === depId))
+          .filter(dep => dep && dep.status !== 'Completed')
+          .map(dep => dep!.title);
+        
           const message = `Cannot assign "${updatedWorkItem.title}": Dependencies not satisfied.`;
           console.log(`❌ ${message} Blocked by: ${blockedBy.join(', ')}`);
           alert(`❌ ${message}\n\nBlocked by: ${blockedBy.join(', ')}`);
-          
-          // Reset drag state when assignment fails
-          setDraggedItem(null);
-          document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-            el.style.opacity = '1';
-            el.style.transform = 'scale(1)';
-            el.style.pointerEvents = 'auto';
-          });
-          return;
-        }
-        
+        return;
+      }
+      
         // Check skill capacity using the updated work item skills
         const canAssign = canWorkItemBeAssignedToSprint(updatedWorkItem, {
-          frontend: sprintInfo.availableFrontendCapacity,
-          backend: sprintInfo.availableBackendCapacity
-        });
-        
-        if (!canAssign) {
+        frontend: sprintInfo.availableFrontendCapacity,
+        backend: sprintInfo.availableBackendCapacity
+      });
+      
+      if (!canAssign) {
           const message = `Cannot assign "${updatedWorkItem.title}": Insufficient ${updatedWorkItem.requiredSkills.join(' and ')} capacity in this sprint.`;
           console.log(`❌ ${message}`);
           alert(`❌ ${message}\n\nItem needs: ${updatedWorkItem.estimateStoryPoints} pts (${updatedWorkItem.requiredSkills.join(' + ')})\nAvailable: Frontend ${sprintInfo.availableFrontendCapacity.toFixed(1)} pts, Backend ${sprintInfo.availableBackendCapacity.toFixed(1)} pts`);
-          
-          // Reset drag state when assignment fails
-          setDraggedItem(null);
-          document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-            el.style.opacity = '1';
-            el.style.transform = 'scale(1)';
-            el.style.pointerEvents = 'auto';
-          });
-          return;
-        }
+        return;
       }
+    }
 
       // Save sprint assignment to database
       // Both regular work items and epic children (if they exist as work items) can be assigned
@@ -548,85 +552,69 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             console.log('✅ Work item skills updated in database');
           }
           
-          console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
-          await workItemsApi.assignToSprint(itemId, sprintId);
-          console.log('✅ Sprint assignment saved to database');
-        } catch (error) {
+        console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
+        await workItemsApi.assignToSprint(itemId, sprintId);
+        console.log('✅ Sprint assignment saved to database');
+      } catch (error) {
           console.error('❌ Failed to save to database:', error);
           alert('❌ Failed to save assignment. Please try again.');
-          
-          // Reset drag state when database save fails
-          setDraggedItem(null);
-          document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-            el.style.opacity = '1';
-            el.style.transform = 'scale(1)';
-            el.style.pointerEvents = 'auto';
-          });
-          return;
-        }
-      } else {
+        return;
+      }
+    } else {
         // This is an imported epic child that hasn't been converted to a work item yet
         const message = `Cannot assign "${workItem.title}" to sprint. This item needs to be converted to a work item first.`;
         console.log(`❌ ${message}`);
         alert(`❌ ${message}\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
-        
-        // Reset drag state when assignment fails
-        setDraggedItem(null);
-        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-          el.style.opacity = '1';
-          el.style.transform = 'scale(1)';
-          el.style.pointerEvents = 'auto';
-        });
         return;
-      }
+    }
 
-      const updatedWorkItems = data.workItems.map(item => {
-        // Handle regular work items
-        if (item.id === itemId) {
+    const updatedWorkItems = data.workItems.map(item => {
+      // Handle regular work items
+      if (item.id === itemId) {
+        return {
+          ...item,
+            requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
+          assignedSprints: item.assignedSprints.includes(sprintId) 
+            ? item.assignedSprints 
+            : [...item.assignedSprints, sprintId]
+        };
+      }
+      
+      // Handle epic work items - update children
+      if (item.isEpic && item.children) {
+        const childIndex = item.children.findIndex(child => child.id === itemId);
+        if (childIndex !== -1) {
+          const updatedChildren = [...item.children];
+          updatedChildren[childIndex] = {
+            ...updatedChildren[childIndex],
+              requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
+            assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
+              ? updatedChildren[childIndex].assignedSprints
+              : [...updatedChildren[childIndex].assignedSprints, sprintId]
+          };
+          
           return {
             ...item,
-            requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
-            assignedSprints: item.assignedSprints.includes(sprintId) 
-              ? item.assignedSprints 
-              : [...item.assignedSprints, sprintId]
+            children: updatedChildren
           };
         }
-        
-        // Handle epic work items - update children
-        if (item.isEpic && item.children) {
-          const childIndex = item.children.findIndex(child => child.id === itemId);
-          if (childIndex !== -1) {
-            const updatedChildren = [...item.children];
-            updatedChildren[childIndex] = {
-              ...updatedChildren[childIndex],
-              requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
-              assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
-                ? updatedChildren[childIndex].assignedSprints
-                : [...updatedChildren[childIndex].assignedSprints, sprintId]
-            };
-            
-            return {
-              ...item,
-              children: updatedChildren
-            };
-          }
-        }
-        
-        return item;
-      });
+      }
+      
+      return item;
+    });
 
-      const updatedSprints = data.sprints.map(sprint => {
-        if (sprint.id === sprintId && !sprint.workItems.includes(itemId)) {
-          return {
-            ...sprint,
-            workItems: [...sprint.workItems, itemId]
-          };
-        }
-        return sprint;
-      });
+    const updatedSprints = data.sprints.map(sprint => {
+      if (sprint.id === sprintId && !sprint.workItems.includes(itemId)) {
+        return {
+          ...sprint,
+          workItems: [...sprint.workItems, itemId]
+        };
+      }
+      return sprint;
+    });
 
-      onUpdateWorkItems(updatedWorkItems);
-      onUpdateSprints(updatedSprints);
+    onUpdateWorkItems(updatedWorkItems);
+    onUpdateSprints(updatedSprints);
     } finally {
       // Always clear the processing flag
       setTimeout(() => {
@@ -647,57 +635,57 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     processingRemovalRef.current = true;
 
     try {
-      // Save sprint removal to database (for both regular work items and epic children that have been saved)
-      try {
-        console.log(`💾 Removing sprint assignment from database: ${itemId} ← ${sprintId}`);
-        await workItemsApi.removeFromSprint(itemId, sprintId);
-        console.log('✅ Sprint assignment removed from database');
-      } catch (error) {
-        console.error('❌ Failed to remove sprint assignment from database:', error);
-        console.log('⚠️ Item might be an unsaved epic child, continuing with local state update');
-      }
+    // Save sprint removal to database (for both regular work items and epic children that have been saved)
+    try {
+      console.log(`💾 Removing sprint assignment from database: ${itemId} ← ${sprintId}`);
+      await workItemsApi.removeFromSprint(itemId, sprintId);
+      console.log('✅ Sprint assignment removed from database');
+    } catch (error) {
+      console.error('❌ Failed to remove sprint assignment from database:', error);
+      console.log('⚠️ Item might be an unsaved epic child, continuing with local state update');
+    }
 
-      const updatedWorkItems = data.workItems.map(item => {
-        // Handle regular work items
-        if (item.id === itemId) {
+    const updatedWorkItems = data.workItems.map(item => {
+      // Handle regular work items
+      if (item.id === itemId) {
+        return {
+          ...item,
+          assignedSprints: item.assignedSprints.filter(id => id !== sprintId)
+        };
+      }
+      
+      // Handle epic work items - update children
+      if (item.isEpic && item.children) {
+        const childIndex = item.children.findIndex(child => child.id === itemId);
+        if (childIndex !== -1) {
+          const updatedChildren = [...item.children];
+          updatedChildren[childIndex] = {
+            ...updatedChildren[childIndex],
+            assignedSprints: updatedChildren[childIndex].assignedSprints.filter(id => id !== sprintId)
+          };
+          
           return {
             ...item,
-            assignedSprints: item.assignedSprints.filter(id => id !== sprintId)
+            children: updatedChildren
           };
         }
-        
-        // Handle epic work items - update children
-        if (item.isEpic && item.children) {
-          const childIndex = item.children.findIndex(child => child.id === itemId);
-          if (childIndex !== -1) {
-            const updatedChildren = [...item.children];
-            updatedChildren[childIndex] = {
-              ...updatedChildren[childIndex],
-              assignedSprints: updatedChildren[childIndex].assignedSprints.filter(id => id !== sprintId)
-            };
-            
-            return {
-              ...item,
-              children: updatedChildren
-            };
-          }
-        }
-        
-        return item;
-      });
+      }
+      
+      return item;
+    });
 
-      const updatedSprints = data.sprints.map(sprint => {
-        if (sprint.id === sprintId) {
-          return {
-            ...sprint,
-            workItems: sprint.workItems.filter(id => id !== itemId)
-          };
-        }
-        return sprint;
-      });
+    const updatedSprints = data.sprints.map(sprint => {
+      if (sprint.id === sprintId) {
+        return {
+          ...sprint,
+          workItems: sprint.workItems.filter(id => id !== itemId)
+        };
+      }
+      return sprint;
+    });
 
-      onUpdateWorkItems(updatedWorkItems);
-      onUpdateSprints(updatedSprints);
+    onUpdateWorkItems(updatedWorkItems);
+    onUpdateSprints(updatedSprints);
     } finally {
       // Always clear the processing flag
       setTimeout(() => {
@@ -804,20 +792,28 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                     {readyItems.map(item => (
                       <div
                         key={item.id}
-
-                                                  onPointerDown={(e) => {
-                            // Only start drag on left mouse button and not on scroll gestures
+                        data-item-id={item.id}
+                        onPointerDown={(e) => {
+                            // Only start potential drag on left mouse button
                             if (e.button !== 0) return;
                             
-                            addDebugEvent(`🎯 DRAGGING: "${item.title}"`);
-                            setDraggedItem(item.id);
-                            setHideDropZones(false); // Reset flag for new drag operation
-                            e.currentTarget.style.opacity = '0.7';
-                            e.currentTarget.style.transform = 'scale(0.98)';
-                            e.currentTarget.style.pointerEvents = 'none';
+                            console.log(`🔽 POINTER DOWN: Starting potential drag for "${item.title}"`);
+                            setDragStart({
+                              x: e.clientX,
+                              y: e.clientY,
+                              itemId: item.id
+                            });
                             // Don't prevent default to allow scrolling
                           }}
+                          onClick={(e) => {
+                            console.log(`🖱️ CLICKED on item: "${item.title}"`);
+                          }}
                           onPointerUp={(e) => {
+                            console.log(`🔼 ITEM POINTER UP: draggedItem=${draggedItem}, item.id=${item.id}`);
+                            
+                            // Always clear drag start on pointer up
+                            setDragStart(null);
+                            
                             if (draggedItem === item.id) {
                               // Check if we're over a sprint area using elementFromPoint
                               const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
@@ -857,6 +853,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   e.stopPropagation();
                                   e.preventDefault();
                                   
+                                  // Mark drop as handled
+                                  dropHandledRef.current = true;
+                                  
                                   // Assign to sprint (global handler will clean up drag state)
                                   assignItemToSprint(draggedItem, sprintId);
                                   return; // Successfully handled
@@ -870,10 +869,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             e.preventDefault();
                             e.stopPropagation();
                             return false;
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
                           }}
                                                   className="p-4 border border-amber-300 rounded-lg hover:shadow-md hover:border-amber-400 transition-all duration-200 bg-amber-50 select-none cursor-grab active:cursor-grabbing"
                                                       style={{ 
@@ -982,7 +977,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               )}
 
               {/* Epic Work Items - Display as top-level items */}
-              {unassignedEpicWorkItems.map(epic => (
+                    {unassignedEpicWorkItems.map(epic => (
                       <div key={epic.id} className="border rounded-lg bg-indigo-50 border-indigo-200">
                         {/* Epic Header */}
                         <div 
@@ -1065,19 +1060,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               return (
                                 <div
                                   key={child.id}
+                                  data-item-id={child.id}
                                   onPointerDown={isDraggable ? (e) => {
-                                    // Only start drag on left mouse button and not on scroll gestures
+                                    // Only start potential drag on left mouse button
                                     if (e.button !== 0) return;
                                     
-                                    console.log(`🎯 DRAGGING EPIC CHILD: "${child.title}"`);
-                                    setDraggedItem(child.id);
-                                    setHideDropZones(false); // Reset flag for new drag operation
-                                    const target = e.currentTarget as HTMLElement;
-                                    target.style.opacity = '0.7';
-                                    target.style.transform = 'scale(0.98)';
+                                    setDragStart({
+                                      x: e.clientX,
+                                      y: e.clientY,
+                                      itemId: child.id
+                                    });
                                     // Don't prevent default to allow scrolling
                                   } : undefined}
                                   onPointerUp={isDraggable ? (e) => {
+                                    // Always clear drag start on pointer up
+                                    setDragStart(null);
+                                    
                                     if (draggedItem === child.id) {
                                       const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
                                       let sprintElement = elementUnderPointer;
@@ -1100,37 +1098,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         // Mark that this drop was handled by a specific handler
                                         dropHandledRef.current = true;
                                         
-                                        // Remove blue border from ALL sprint containers immediately
-                                        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
-                                          const htmlEl = el as HTMLElement;
-                                          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-                                          htmlEl.classList.add('border', 'border-gray-200');
-                                          htmlEl.style.minHeight = 'auto';
-                                          htmlEl.style.cursor = 'default';
-                                        });
-                                        
-                                        // Immediately hide drop zone visuals before state update
-                                        setHideDropZones(true);
-                                        
-                                        // Clear drag state immediately to remove visual indicators
-                                        setDraggedItem(null);
-                                        
-                                        // Reset any stuck visual states on dragged items
-                                        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-                                          el.style.opacity = '1';
-                                          el.style.transform = 'scale(1)';
-                                          el.style.pointerEvents = 'auto';
-                                        });
-                                        
                                         assignItemToSprint(child.id, sprintId);
                                         return;
                                       }
                                     }
-                                    
-                                    // Reset visual state if no sprint found
-                                    const target = e.currentTarget as HTMLElement;
-                                    target.style.opacity = '1';
-                                    target.style.transform = 'scale(1)';
                                   } : undefined}
                                   style={{ 
                                     display: 'block',
@@ -1254,6 +1225,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               key={sprint.id}
               data-sprint-id={sprint.id}
               onPointerUp={(e) => {
+                // Always clear drag start on pointer up
+                setDragStart(null);
+                
                 if (draggedItem) {
                   addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
                   e.stopPropagation(); // Prevent global pointerup from running too early
@@ -1263,36 +1237,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   
                   const itemToAssign = draggedItem;
                   
-                  // Immediately remove blue border from THIS sprint container
-                  const currentTarget = e.currentTarget as HTMLElement;
-                  currentTarget.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-                  currentTarget.classList.add('border', 'border-gray-200');
-                  currentTarget.style.minHeight = 'auto';
-                  currentTarget.style.cursor = 'default';
-                  
-                  // Remove blue border from ALL sprint containers immediately
-                  document.querySelectorAll('[data-sprint-id]').forEach((el) => {
-                    const htmlEl = el as HTMLElement;
-                    htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-                    htmlEl.classList.add('border', 'border-gray-200');
-                    htmlEl.style.minHeight = 'auto';
-                    htmlEl.style.cursor = 'default';
-                  });
-                  
-                  // Immediately hide drop zone visuals before state update
-                  setHideDropZones(true);
-                  
-                  // Clear drag state immediately to remove visual indicators
-                  setDraggedItem(null);
-                  
-                  // Reset any stuck visual states on dragged items
-                  document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-                    el.style.opacity = '1';
-                    el.style.transform = 'scale(1)';
-                    el.style.pointerEvents = 'auto';
-                  });
-                  
-                  // Assign to sprint
+                  // Assign to sprint (global handler will clean up visual state)
                   assignItemToSprint(itemToAssign, sprint.id);
                 }
               }}
@@ -1321,7 +1266,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                 )}
 
-                <div className="flex justify-between items-start mb-3">
+              <div className="flex justify-between items-start mb-3">
                 <div>
                   <h4 className="font-semibold">{sprint.name}</h4>
                   <p className="text-sm text-gray-600">

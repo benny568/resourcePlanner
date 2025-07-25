@@ -1,0 +1,23 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json ./
+
+# Configure npm to use public registry and handle SSL issues
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm config delete //registry.npmjs.org/:_authToken || true && \
+    npm config set strict-ssl false && \
+    npm config set ca null
+
+# Install dependencies
+RUN npm install
+
+# Copy initial source code (will be overridden by volume mounts in development)
+COPY . .
+
+EXPOSE 3000
+
+# Start development server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"] 

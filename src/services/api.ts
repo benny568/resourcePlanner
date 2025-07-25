@@ -216,13 +216,13 @@ export const transformers = {
       requiredSkills,
       dependencies: item.dependencies || [],
       status: item.status || 'Not Started',
-      jiraId: item.jiraId,
-      jiraStatus: item.jiraStatus,
+    jiraId: item.jiraId,
+    jiraStatus: item.jiraStatus,
       assignedSprints: item.assignedSprints || [],
-      epicId: item.epicId,
-      // Epic work item specific properties
+    epicId: item.epicId,
+    // Epic work item specific properties
       isEpic: item.isEpic || false,
-      children: item.children
+    children: item.children
     };
 
     // Log validation fixes for debugging
