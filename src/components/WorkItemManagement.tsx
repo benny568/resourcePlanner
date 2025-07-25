@@ -440,7 +440,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                                 {item.jiraId}
                               </a>
                               <ExternalLink className="h-3 w-3 text-gray-400" />
-                              <span className="font-medium text-gray-900">[EPIC] {item.title}</span>
+                              <span className="font-medium text-gray-900">[EPIC] {item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
                             </div>
                             
                             {item.description && (
@@ -527,7 +527,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                                 </div>
                                 
                                 <div className="flex-1">
-                                  <span className="text-sm text-gray-900">{child.title}</span>
+                                  <span className="text-sm text-gray-900">{child.jiraId ? `${child.jiraId} - ${child.title}` : child.title}</span>
                                   {child.description && (
                                     <p className="text-xs text-gray-600 mt-1">{child.description}</p>
                                   )}
@@ -558,18 +558,15 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                     <div className="flex-1">
                       <h3 className="font-semibold text-lg">
                         {item.jiraId ? (
-                          <>
-                            <a 
-                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {item.jiraId}
-                            </a>
-                            <span className="ml-1">{item.title}</span>
-                          </>
+                          <a 
+                            href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {`${item.jiraId} - ${item.title}`}
+                          </a>
                         ) : (
                           item.title
                         )}

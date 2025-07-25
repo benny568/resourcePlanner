@@ -886,7 +886,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             transition: 'all 0.2s ease'
                           }}
                       >
-                        <div className="font-medium text-sm">{item.title}</div>
+                        <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                         <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                           <div className="flex items-center gap-2">
                             <span>{item.estimateStoryPoints} pts</span>
@@ -941,7 +941,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           key={item.id}
                           className="p-4 border rounded-lg bg-amber-50 border-amber-200 hover:border-amber-300 hover:shadow-sm transition-all duration-200"
                         >
-                          <div className="font-medium text-sm">{item.title}</div>
+                          <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                           <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                             <div className="flex items-center gap-2">
                               <span>{item.estimateStoryPoints} pts</span>
@@ -994,7 +994,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           )}
                           <div className="flex-1">
                             <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
-                              📋 {epic.title}
+                              📋 {epic.jiraId ? `${epic.jiraId} - ${epic.title}` : epic.title}
                             </div>
                             <div className="text-xs text-indigo-600">
                               Epic • {epic.children?.length || 0} children • {epic.jiraId}
@@ -1122,7 +1122,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   }}
                                 >
                                   <div style={{ fontWeight: '500', marginBottom: '6px' }}>
-                                    {child.title}
+                                    {child.jiraId ? `${child.jiraId} - ${child.title}` : child.title}
                                   </div>
                                   <div style={{ 
                                     display: 'flex', 
@@ -1327,7 +1327,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   assignedItems.map(item => (
                     <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
                       <div>
-                        <span className="font-medium">{item.title}</span>
+                        <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
                         <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
                       </div>
                       <button
