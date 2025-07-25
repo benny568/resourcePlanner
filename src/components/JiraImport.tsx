@@ -222,6 +222,7 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       
       setEpicImportStatus('success');
       // Call onImportComplete to update epics display, but mark as partial import to prevent modal
+      // Note: The App component will handle deduplication when merging with existing epics
       onImportComplete({ teamMembers: [], workItems: [], epics: loadedEpics, isPartialImport: true, pagination: paginationData || undefined });
       
       console.log(`✅ Epic import completed successfully with ${loadedEpics.length} epics`);
@@ -261,9 +262,14 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       
       if (responseData.epics && Array.isArray(responseData.epics)) {
         const newEpics = responseData.epics;
-        const updatedEpics = [...epics, ...newEpics];
         
-        // Update state with combined epics and new pagination data
+        // Deduplicate epics by jiraId/id to prevent duplicates
+        const existingEpicIds = new Set(epics.map((epic: Epic) => epic.jiraId || epic.id));
+        const uniqueNewEpics = newEpics.filter((epic: Epic) => !existingEpicIds.has(epic.jiraId || epic.id));
+        
+        const updatedEpics = [...epics, ...uniqueNewEpics];
+        
+        // Update state with deduplicated epics and new pagination data
         setEpics(updatedEpics);
         setPagination(responseData.pagination);
         
@@ -283,7 +289,10 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
           }, 500);
         }
         
-        console.log(`✅ Loaded ${newEpics.length} more epics. Total: ${updatedEpics.length}/${responseData.pagination.total}`);
+        console.log(`✅ Loaded ${newEpics.length} epics, ${uniqueNewEpics.length} were unique. Total: ${updatedEpics.length}/${responseData.pagination.total}`);
+        if (newEpics.length !== uniqueNewEpics.length) {
+          console.log(`🔄 Filtered out ${newEpics.length - uniqueNewEpics.length} duplicate epics`);
+        }
       }
 
     } catch (error) {
