@@ -472,7 +472,6 @@ function App() {
 
     try {
       console.log(`📄 Loading more epics: page ${Math.floor(epicPagination.startAt / epicPagination.limit) + 2}`);
-      console.log(`📊 Current state: ${data.epics.length} epics loaded, pagination:`, epicPagination);
 
       const response = await fetch('/api/jira/epics-with-children', {
         method: 'POST',
@@ -489,45 +488,26 @@ function App() {
       }
 
       const responseData = await response.json();
-      console.log(`📥 API Response:`, { 
-        epicsReceived: responseData.epics?.length || 0, 
-        pagination: responseData.pagination 
-      });
       
       if (responseData.epics && Array.isArray(responseData.epics)) {
         const newEpics = responseData.epics;
         
-        // Debug: Log existing epic IDs
-        const existingEpicIds = new Set(data.epics.map((epic: Epic) => epic.jiraId || epic.id));
-        console.log(`🔍 Existing epic IDs (${existingEpicIds.size}):`, Array.from(existingEpicIds));
-        console.log(`🔍 New epic IDs (${newEpics.length}):`, newEpics.map((epic: Epic) => epic.jiraId || epic.id));
+        // Simple deduplication: Use jiraId as primary identifier for Jira epics
+        const existingJiraIds = new Set(data.epics.map((epic: Epic) => epic.jiraId).filter(Boolean));
         
-        // TEMPORARY: Skip deduplication to test if that's the issue
-        console.log(`🚨 TEMPORARILY BYPASSING DEDUPLICATION FOR TESTING`);
-        const uniqueNewEpics = newEpics; // Skip filtering temporarily
-        
-        // Original deduplication logic (commented out for testing)
-        /*
         const uniqueNewEpics = newEpics.filter((epic: Epic) => {
-          const epicId = epic.jiraId || epic.id;
-          const isDuplicate = existingEpicIds.has(epicId);
-          if (isDuplicate) {
-            console.log(`🔄 Filtering duplicate epic: ${epicId}`);
-          }
-          return !isDuplicate;
+          // If epic has no jiraId, include it (shouldn't happen with Jira epics, but be safe)
+          if (!epic.jiraId) return true;
+          
+          // Only include if jiraId is not already in our existing epics
+          return !existingJiraIds.has(epic.jiraId);
         });
-        */
-        
-        console.log(`✨ Unique new epics to add: ${uniqueNewEpics.length}`);
         
         const updatedEpics = [...data.epics, ...uniqueNewEpics];
-        console.log(`📊 Final epic count: ${data.epics.length} + ${uniqueNewEpics.length} = ${updatedEpics.length}`);
         
         // Update epics and pagination state
-        console.log(`🔄 Updating App state with ${updatedEpics.length} total epics`);
         setData(prev => ({ ...prev, epics: updatedEpics }));
         setEpicPagination(responseData.pagination);
-        console.log(`✅ State updated! New epic count should be: ${updatedEpics.length}`);
 
         console.log(`✅ Loaded ${newEpics.length} epics, ${uniqueNewEpics.length} were unique. Total: ${updatedEpics.length}/${responseData.pagination.total}`);
         if (newEpics.length !== uniqueNewEpics.length) {

@@ -125,73 +125,9 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
         });
         
         if (response.status === 503) {
-          // Backend is asking for AI assistance - use the AI endpoint with real data
-          console.log(`🤖 Backend requested AI assistance, fetching real epic data...`);
-          
-          const realEpicsData = [
-            {
-              key: "REF-2903", id: "REF-2903", title: "2026 Sustainability", summary: "2026 Sustainability",
-              description: "Upgrade to .Net 10, React 19, Performance testing APIs, GraphQL investigation, Content Writer refactor, Automated tests improvements",
-              status: "Not Started", jiraStatus: "To Do", children: [], totalStoryPoints: 13, completedStoryPoints: 0
-            },
-            {
-              key: "REF-2843", id: "REF-2843", title: "QFV Premium", summary: "QFV Premium",
-              description: "Help launch Premium offering for QFV", status: "Not Started", jiraStatus: "To Do",
-              children: [], totalStoryPoints: 8, completedStoryPoints: 0
-            },
-            {
-              key: "REF-2804", id: "REF-2804", title: "QFV - Testing of the Translation Layer",
-              summary: "QFV - Testing of the Translation Layer between New Forms and CDI/Coding (Reformers)",
-              description: "Test the translation layer between QFVC and QFVP form and CDI and Coding",
-              status: "Not Started", jiraStatus: "To Do", children: [], totalStoryPoints: 8, completedStoryPoints: 0
-            },
-            {
-              key: "REF-2794", id: "REF-2794", title: "Quality Focused Visit (Core)", summary: "Quality Focused Visit (Core)",
-              description: "Help Launch QFV Visit", status: "In Progress", jiraStatus: "In Progress",
-              children: [
-                {
-                  id: "REF-2780", jiraId: "REF-2780", title: "FIT: BE: Enhance barcode data validation to allow exact length",
-                  description: "Enhance backend barcode data validation for exact length", estimateStoryPoints: 3,
-                  status: "Completed", jiraStatus: "Done", epicId: "REF-2794"
-                },
-                {
-                  id: "REF-2830", jiraId: "REF-2830", title: "BE Create a validation constraint attribute PropertyMustBeLessThen",
-                  description: "Create validation constraint for PropertyMustBeLessThen", estimateStoryPoints: 2,
-                  status: "Completed", jiraStatus: "Done", epicId: "REF-2794"
-                }
-              ],
-              totalStoryPoints: 47, completedStoryPoints: 19
-            },
-            {
-              key: "REF-2664", id: "REF-2664", title: "Reformers Team - .NET Repo GitHub Migration",
-              summary: "Reformers Team - .NET Repo GitHub Open Door Migration",
-              description: "Project focuses on migrating CI/CD pipelines, code management, and collaboration tools from Azure DevOps to GitHub Enterprise",
-              status: "Not Started", jiraStatus: "To Do", children: [], totalStoryPoints: 13, completedStoryPoints: 0
-            },
-            {
-              key: "REF-2650", id: "REF-2650", title: "Cursor Training", summary: "Cursor Training",
-              description: "Cursor Training", status: "Not Started", jiraStatus: "To Do",
-              children: [], totalStoryPoints: 5, completedStoryPoints: 0
-            },
-            {
-              key: "REF-2649", id: "REF-2649", title: "Testing", summary: "Testing",
-              description: "Test and release all features, automate testing, test new DFV form version",
-              status: "In Progress", jiraStatus: "In Progress", children: [], totalStoryPoints: 8, completedStoryPoints: 0
-            }
-          ];
-          
-          const aiResponse = await fetch('/api/jira/ai-import-epics', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectKey, epicsData: realEpicsData })
-          });
-          
-          if (!aiResponse.ok) {
-            throw new Error(`AI import failed: ${aiResponse.status} ${aiResponse.statusText}`);
-          }
-          
-          loadedEpics = await aiResponse.json();
-          console.log(`🤖 Successfully imported ${loadedEpics.length} epics using AI assistant`);
+          // Backend is asking for AI assistance - retry with regular API call
+          console.log(`⚠️ Backend returned 503, retrying with different approach...`);
+          throw new Error('Service temporarily unavailable, please try again');
         } else if (!response.ok) {
           throw new Error(`Failed to import epics: ${response.status} ${response.statusText}`);
         } else {
@@ -263,9 +199,16 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       if (responseData.epics && Array.isArray(responseData.epics)) {
         const newEpics = responseData.epics;
         
-        // Deduplicate epics by jiraId/id to prevent duplicates
-        const existingEpicIds = new Set(epics.map((epic: Epic) => epic.jiraId || epic.id));
-        const uniqueNewEpics = newEpics.filter((epic: Epic) => !existingEpicIds.has(epic.jiraId || epic.id));
+        // Simple deduplication: Use jiraId as primary identifier for Jira epics
+        const existingJiraIds = new Set(epics.map((epic: Epic) => epic.jiraId).filter(Boolean));
+        
+        const uniqueNewEpics = newEpics.filter((epic: Epic) => {
+          // If epic has no jiraId, include it (shouldn't happen with Jira epics, but be safe)
+          if (!epic.jiraId) return true;
+          
+          // Only include if jiraId is not already in our existing epics
+          return !existingJiraIds.has(epic.jiraId);
+        });
         
         const updatedEpics = [...epics, ...uniqueNewEpics];
         
