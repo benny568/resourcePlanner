@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
@@ -27,6 +27,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [dragStart, setDragStart] = useState<{x: number, y: number, itemId: string} | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
+  
+  // Auto-assign preview state
+  const [autoAssignPreview, setAutoAssignPreview] = useState<{
+    workItems: WorkItem[];
+    sprints: Sprint[];
+    isPreviewActive: boolean;
+    possibleEndDate?: Date;
+  } | null>(null);
   const processingAssignmentRef = React.useRef(false);
   const processingRemovalRef = React.useRef(false);
   const dropHandledRef = React.useRef(false);
@@ -158,8 +166,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log(`📋 EXPANDED EPICS:`, Array.from(newExpanded));
   };
 
+  // Use preview data if available, otherwise use actual data
+  const currentWorkItems = autoAssignPreview?.isPreviewActive ? autoAssignPreview.workItems : data.workItems;
+  const currentSprints = autoAssignPreview?.isPreviewActive ? autoAssignPreview.sprints : data.sprints;
+
   // Get unassigned work items (exclude epic children - they'll be shown under parent epics)  
-  const unassignedItems = data.workItems.filter(item => 
+  const unassignedItems = currentWorkItems.filter(item => 
     item.assignedSprints.length === 0 && 
     item.status !== 'Completed' &&
     !item.isEpic && // Not an epic work item
@@ -177,11 +189,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   })));
 
   // Get blocked work items (have unfinished dependencies)
-  const blockedItems = getBlockedWorkItems(unassignedItems, data.workItems);
+  const blockedItems = getBlockedWorkItems(unassignedItems, currentWorkItems);
   const readyItems = unassignedItems.filter(item => !blockedItems.includes(item));
 
   // Get all epic work items that are not completed (work items with isEpic: true)
-  const unassignedEpicWorkItems = data.workItems.filter(item => 
+  const unassignedEpicWorkItems = currentWorkItems.filter(item => 
     item.isEpic && 
     item.status !== 'Completed' &&
     (item.assignedSprints.length === 0 || // Epic itself is unassigned OR
@@ -199,7 +211,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   }, [readyItems, unassignedEpicWorkItems]);
 
   // Get upcoming sprints (not in the past)
-  const upcomingSprints = data.sprints.filter(sprint => 
+  const upcomingSprints = currentSprints.filter(sprint => 
     !isBefore(sprint.endDate, new Date())
   ).slice(0, 12); // Show next 12 sprints to better showcase quarterly grouping
 
@@ -212,13 +224,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const sprintData = useMemo(() => {
     return upcomingSprints.map(sprint => {
       // Get assigned top-level work items
-      const assignedItems = data.workItems.filter(item => 
+      const assignedItems = currentWorkItems.filter(item => 
         item.assignedSprints.includes(sprint.id)
       );
       
       // Get assigned epic children
       const assignedEpicChildren: WorkItem[] = [];
-      data.workItems.filter(item => item.isEpic && item.children).forEach(epic => {
+      currentWorkItems.filter(item => item.isEpic && item.children).forEach(epic => {
         epic.children!.forEach(child => {
           if (child.assignedSprints.includes(sprint.id)) {
             assignedEpicChildren.push(child);
@@ -271,15 +283,31 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         availableBackendCapacity: Math.max(0, skillCapacities.backend - backendPoints)
       };
     });
-  }, [upcomingSprints, data.workItems, data.teamMembers, data.publicHolidays]);
+  }, [upcomingSprints, currentWorkItems, data.teamMembers, data.publicHolidays]);
 
-  // Auto-suggest sprint assignments based on deadlines and capacity
+  // Enhanced Auto-Assign Items with 70% capacity targeting and preview
   const autoAssignItems = () => {
     const updatedWorkItems = [...data.workItems];
-    const updatedSprints = [...data.sprints];
+    let updatedSprints = [...data.sprints];
     
-    // Clear existing assignments for auto-assignment
-    unassignedItems.forEach(item => {
+    // Get all items that need assignment (including epic children)
+    const allUnassignedItems = [];
+    
+    // Add individual unassigned items
+    allUnassignedItems.push(...readyItems);
+    
+    // Add unassigned epic children from unassigned epic work items
+    unassignedEpicWorkItems.forEach(epic => {
+      if (epic.children) {
+        const unassignedChildren = epic.children.filter(child => 
+          child.assignedSprints.length === 0 && child.status !== 'Completed'
+        );
+        allUnassignedItems.push(...unassignedChildren);
+      }
+    });
+
+    // Clear existing assignments for items we're about to auto-assign
+    allUnassignedItems.forEach(item => {
       const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
       if (itemIndex >= 0) {
         updatedWorkItems[itemIndex] = {
@@ -289,86 +317,211 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     });
 
-    // Sort items by deadline (earliest first), but only include items that are ready
-    const itemsToAssign = [...readyItems].sort((a, b) => 
-      a.requiredCompletionDate.getTime() - b.requiredCompletionDate.getTime()
-    );
+    // Sort items by deadline (earliest first)
+    const itemsToAssign = [...allUnassignedItems].sort((a, b) => {
+      const dateA = a.requiredCompletionDate instanceof Date 
+        ? a.requiredCompletionDate 
+        : new Date(a.requiredCompletionDate);
+      const dateB = b.requiredCompletionDate instanceof Date 
+        ? b.requiredCompletionDate 
+        : new Date(b.requiredCompletionDate);
+      return dateA.getTime() - dateB.getTime();
+    });
 
-    // Track available capacity for each sprint (skill-specific)
-    const sprintCapacities = new Map(
-      sprintData.map(sd => [sd.sprint.id, {
-        total: sd.availableCapacity,
-        frontend: sd.availableFrontendCapacity,
-        backend: sd.availableBackendCapacity
-      }])
-    );
+    // Find first available sprint (sprint with no assignments or first empty sprint)
+    let currentSprintIndex = 0;
+    const existingSprints = sprintData.length > 0 ? sprintData : [];
+    
+    // If there are existing sprints with assignments, find the first free one
+    if (existingSprints.length > 0) {
+      currentSprintIndex = existingSprints.findIndex(sd => sd.assignedPoints === 0);
+      if (currentSprintIndex === -1) {
+        currentSprintIndex = existingSprints.length; // Start after last existing sprint
+      }
+    }
 
-    itemsToAssign.forEach(item => {
-      // Find the best sprint for this item
-      const suitableSprints = sprintData.filter(sd => {
-        // Sprint ends before or on the item's deadline
-        if (isAfter(sd.sprint.endDate, item.requiredCompletionDate)) {
-          return false;
+    // Track sprint utilizations for 70% capacity targeting
+    const sprintUtilizations = new Map();
+    let lastAssignedSprintEndDate: Date | null = null;
+
+    console.log(`🎯 Auto-assign starting with ${itemsToAssign.length} items to assign`);
+    console.log(`📊 Available sprints: ${existingSprints.length}, starting at index: ${currentSprintIndex}`);
+    
+    itemsToAssign.forEach((item, idx) => {
+      console.log(`\n🚀 [${idx + 1}/${itemsToAssign.length}] Processing: ${item.title.substring(0, 40)}...`);
+      console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}]`);
+      
+      let assigned = false;
+      
+      // Try to assign to existing sprints first (aiming for 70% capacity)
+      for (let i = currentSprintIndex; i < existingSprints.length && !assigned; i++) {
+        const sprintData = existingSprints[i];
+        const sprint = sprintData.sprint;
+        
+        console.log(`   🔍 Checking sprint ${i + 1}: ${sprint.name}`);
+        
+        // Check if item can be assigned to this sprint
+        if (!canWorkItemStartInSprint(item, sprint, updatedWorkItems, updatedSprints)) {
+          console.log(`   ❌ Failed dependency check`);
+          continue;
         }
         
-        // Check if item can start in this sprint (dependencies satisfied)
-        if (!canWorkItemStartInSprint(item, sd.sprint, updatedWorkItems, updatedSprints)) {
-          return false;
+        // Check deadline constraint - sprint must end before or on the item deadline
+        const itemDeadline = item.requiredCompletionDate instanceof Date 
+          ? item.requiredCompletionDate 
+          : new Date(item.requiredCompletionDate);
+        if (isAfter(sprint.endDate, itemDeadline)) {
+          // Sprint ends after item deadline - this sprint is too late
+          console.log(`   ❌ Failed deadline check: sprint ends ${sprint.endDate} vs deadline ${itemDeadline}`);
+          continue;
         }
         
-        // Check if sprint has enough skill-specific capacity
-        const capacities = sprintCapacities.get(sd.sprint.id);
-        if (!capacities) return false;
+        // Calculate current utilization
+        const currentUtilization = sprintUtilizations.get(sprint.id) || {
+          totalCapacity: sprintData.capacity,
+          frontendCapacity: sprintData.skillCapacities.frontend,
+          backendCapacity: sprintData.skillCapacities.backend,
+          assignedTotal: sprintData.assignedPoints,
+          assignedFrontend: sprintData.frontendPoints,
+          assignedBackend: sprintData.backendPoints
+        };
         
-        return canWorkItemBeAssignedToSprint(item, {
-          frontend: capacities.frontend,
-          backend: capacities.backend
+        console.log(`   📊 Current utilization:`, {
+          totalCapacity: currentUtilization.totalCapacity,
+          frontendCapacity: currentUtilization.frontendCapacity,
+          backendCapacity: currentUtilization.backendCapacity,
+          assignedTotal: currentUtilization.assignedTotal,
+          assignedFrontend: currentUtilization.assignedFrontend,
+          assignedBackend: currentUtilization.assignedBackend
         });
-      });
-
-      if (suitableSprints.length > 0) {
-        // Choose the latest suitable sprint (closest to deadline)
-        const targetSprint = suitableSprints.sort((a, b) => 
-          b.sprint.endDate.getTime() - a.sprint.endDate.getTime()
-        )[0];
-
-        // Assign item to sprint
-        const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
-        if (itemIndex >= 0) {
-          updatedWorkItems[itemIndex] = {
-            ...updatedWorkItems[itemIndex],
-            assignedSprints: [targetSprint.sprint.id]
-          };
-
-          // Update sprint's work items
-          const sprintIndex = updatedSprints.findIndex(s => s.id === targetSprint.sprint.id);
-          if (sprintIndex >= 0 && !updatedSprints[sprintIndex].workItems.includes(item.id)) {
-            updatedSprints[sprintIndex] = {
-              ...updatedSprints[sprintIndex],
-              workItems: [...updatedSprints[sprintIndex].workItems, item.id]
-            };
+        
+        // Check if adding this item would exceed 70% in any skill
+        const skillCapacityCheck = item.requiredSkills.every(skill => {
+          if (skill === 'frontend') {
+            const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
+            console.log(`   🎨 Frontend check: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: 70%)`);
+            return newFrontendUtil <= 0.7;
+          } else if (skill === 'backend') {
+            const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+            console.log(`   ⚙️ Backend check: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: 70%)`);
+            return newBackendUtil <= 0.7;
           }
+          return true;
+        });
+        
+        const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
+        console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: 70%)`);
+        
+        if (skillCapacityCheck && newTotalUtil <= 0.7) {
+          console.log(`   ✅ ASSIGNED to ${sprint.name}!`);
+          
+          // Assign item to this sprint
+          const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
+          if (itemIndex >= 0) {
+            updatedWorkItems[itemIndex] = {
+              ...updatedWorkItems[itemIndex],
+              assignedSprints: [sprint.id]
+            };
 
-          // Reduce available capacity for each required skill
-          const currentCapacities = sprintCapacities.get(targetSprint.sprint.id) || { total: 0, frontend: 0, backend: 0 };
-          const updatedCapacities = { ...currentCapacities };
-          
-          item.requiredSkills.forEach(skill => {
-            if (skill === 'frontend') {
-              updatedCapacities.frontend = Math.max(0, updatedCapacities.frontend - item.estimateStoryPoints);
-            } else if (skill === 'backend') {
-              updatedCapacities.backend = Math.max(0, updatedCapacities.backend - item.estimateStoryPoints);
+            // Update sprint's work items
+            const sprintIndex = updatedSprints.findIndex(s => s.id === sprint.id);
+            if (sprintIndex >= 0 && !updatedSprints[sprintIndex].workItems.includes(item.id)) {
+              updatedSprints[sprintIndex] = {
+                ...updatedSprints[sprintIndex],
+                workItems: [...updatedSprints[sprintIndex].workItems, item.id]
+              };
             }
-          });
-          
-          updatedCapacities.total = Math.max(0, updatedCapacities.total - item.estimateStoryPoints);
-          sprintCapacities.set(targetSprint.sprint.id, updatedCapacities);
+            
+            // Update utilization tracking
+            const updatedUtil = { ...currentUtilization };
+            updatedUtil.assignedTotal += item.estimateStoryPoints;
+            
+            item.requiredSkills.forEach(skill => {
+              if (skill === 'frontend') {
+                updatedUtil.assignedFrontend += item.estimateStoryPoints;
+              } else if (skill === 'backend') {
+                updatedUtil.assignedBackend += item.estimateStoryPoints;
+              }
+            });
+            
+            sprintUtilizations.set(sprint.id, updatedUtil);
+            assigned = true;
+            lastAssignedSprintEndDate = sprint.endDate;
+          }
+        } else {
+          console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > 0.7}`);
         }
+      }
+      
+      if (!assigned) {
+        console.log(`   ⚠️ Item was NOT assigned to any existing sprint`);
+      }
+      
+      // If not assigned to existing sprints, create new sprint if needed
+      if (!assigned) {
+        // TODO: Implement new sprint creation based on sprint configuration
+        console.log(`⚠️ Item ${item.title} could not be assigned - may need new sprint creation`);
       }
     });
 
-    onUpdateWorkItems(updatedWorkItems);
-    onUpdateSprints(updatedSprints);
+    // Calculate possible end date
+    const possibleEndDate = lastAssignedSprintEndDate || new Date();
+
+    // Set preview state instead of immediately saving
+    setAutoAssignPreview({
+      workItems: updatedWorkItems,
+      sprints: updatedSprints,
+      isPreviewActive: true,
+      possibleEndDate
+    });
+  };
+
+  // Save auto-assign preview to database
+  const saveAutoAssignPreview = async () => {
+    if (!autoAssignPreview) return;
+    
+    try {
+      onUpdateWorkItems(autoAssignPreview.workItems);
+      onUpdateSprints(autoAssignPreview.sprints);
+      setAutoAssignPreview(null);
+      console.log('✅ Auto-assign results saved successfully');
+    } catch (error) {
+      console.error('❌ Failed to save auto-assign results:', error);
+    }
+  };
+
+  // Clear auto-assign preview
+  const clearAutoAssignPreview = () => {
+    setAutoAssignPreview(null);
+  };
+
+  // Clear assignments from a specific sprint onwards
+  const clearSprintsFrom = (startSprintIndex: number) => {
+    const sprintsToUpdate = [...data.sprints];
+    const workItemsToUpdate = [...data.workItems];
+    
+    // Get sprints to clear (from startSprintIndex to end)
+    const sprintsToClear = upcomingSprints.slice(startSprintIndex);
+    const sprintIdsToClear = new Set(sprintsToClear.map(s => s.id));
+    
+    // Remove assignments from work items for these sprints
+    workItemsToUpdate.forEach((item, itemIndex) => {
+      const updatedAssignedSprints = item.assignedSprints.filter(sprintId => 
+        !sprintIdsToClear.has(sprintId)
+      );
+      
+      if (updatedAssignedSprints.length !== item.assignedSprints.length) {
+        workItemsToUpdate[itemIndex] = {
+          ...item,
+          assignedSprints: updatedAssignedSprints
+        };
+      }
+    });
+    
+    onUpdateWorkItems(workItemsToUpdate);
+    onUpdateSprints(sprintsToUpdate);
+    
+    console.log(`🗑️ Cleared assignments from sprint ${startSprintIndex + 1} onwards`);
   };
 
   // Clear all assignments
@@ -382,6 +535,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       ...sprint,
       workItems: []
     }));
+
+    // Clear auto-assign preview if active
+    setAutoAssignPreview(null);
 
     onUpdateWorkItems(updatedWorkItems);
     onUpdateSprints(updatedSprints);
@@ -761,20 +917,47 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             Sprint Planning
           </h2>
           <div className="flex gap-2">
-            <button
-              onClick={autoAssignItems}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-2"
-            >
-              <Calculator className="h-4 w-4" />
-              Auto-Assign Items
-            </button>
-            <button
-              onClick={clearAllAssignments}
-              className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-2"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Clear All
-            </button>
+            {autoAssignPreview?.isPreviewActive ? (
+              // Preview mode - show Save/Clear buttons
+              <>
+                <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Preview Mode - End Date: {autoAssignPreview.possibleEndDate ? format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy') : 'TBD'}
+                </div>
+                <button
+                  onClick={saveAutoAssignPreview}
+                  className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 flex items-center gap-2"
+                >
+                  <Save className="h-4 w-4" />
+                  Save
+                </button>
+                <button
+                  onClick={clearAutoAssignPreview}
+                  className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 flex items-center gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </button>
+              </>
+            ) : (
+              // Normal mode - show Auto-Assign and Clear All buttons
+              <>
+                <button
+                  onClick={autoAssignItems}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-2"
+                >
+                  <Calculator className="h-4 w-4" />
+                  Auto-Assign Items
+                </button>
+                <button
+                  onClick={clearAllAssignments}
+                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-2"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Clear All
+                </button>
+              </>
+            )}
           </div>
         </div>
 
