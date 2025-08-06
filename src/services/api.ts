@@ -129,6 +129,12 @@ export const sprintsApi = {
     apiRequest<any>(`/sprints/${id}`, {
       method: 'DELETE',
     }),
+  
+  batchUpdate: (sprints: any[], isRegeneration?: boolean) =>
+    apiRequest<any>('/sprints/batch', {
+      method: 'POST',
+      body: JSON.stringify({ sprints, isRegeneration }),
+    }),
 };
 
 // Public Holidays API

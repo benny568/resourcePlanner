@@ -8,7 +8,7 @@ interface SprintConfigurationProps {
   sprintConfig: SprintConfig;
   sprints: Sprint[];
   onUpdateSprintConfig: (config: SprintConfig) => void;
-  onUpdateSprints: (sprints: Sprint[]) => void;
+  onUpdateSprints: (sprints: Sprint[], useBatchOperation?: boolean, isRegeneration?: boolean) => void;
 }
 
 export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
@@ -27,6 +27,12 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   const [updateMessage, setUpdateMessage] = useState('');
 
   const handleConfigUpdate = async () => {
+    // Prevent multiple simultaneous updates
+    if (isUpdating) {
+      console.log('⚠️ Configuration update already in progress, ignoring click');
+      return;
+    }
+    
     setIsUpdating(true);
     setUpdateMessage('');
     
@@ -42,13 +48,19 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
       // Regenerate sprints for current year
       const currentYear = new Date().getFullYear();
       const newSprints = generateSprintsForYear(newConfig, currentYear);
-      await onUpdateSprints(newSprints);
+      await onUpdateSprints(newSprints, true, true); // Use batch operation for bulk sprint regeneration with isRegeneration=true
       
       setUpdateMessage('✅ Configuration and sprints updated successfully!');
       setTimeout(() => setUpdateMessage(''), 3000);
     } catch (error) {
       console.error('Error updating configuration:', error);
-      setUpdateMessage('❌ Failed to update configuration. Please try again.');
+      // Check if it's a regeneration conflict
+      if (error && typeof error === 'object' && 'message' in error && 
+          typeof error.message === 'string' && error.message.includes('regeneration is already in progress')) {
+        setUpdateMessage('⚠️ Sprint regeneration is already in progress. Please wait...');
+      } else {
+        setUpdateMessage('❌ Failed to update configuration. Please try again.');
+      }
       setTimeout(() => setUpdateMessage(''), 5000);
     } finally {
       setIsUpdating(false);
@@ -59,13 +71,13 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
     const updatedSprints = sprints.map(sprint =>
       sprint.id === sprintId ? { ...sprint, plannedVelocity: velocity } : sprint
     );
-    await onUpdateSprints(updatedSprints);
+    await onUpdateSprints(updatedSprints); // Single sprint update, use individual operation
   };
 
   const generateSprintsForNextYear = () => {
     const nextYear = new Date().getFullYear() + 1;
     const nextYearSprints = generateSprintsForYear(sprintConfig, nextYear);
-    onUpdateSprints([...sprints, ...nextYearSprints]);
+    onUpdateSprints([...sprints, ...nextYearSprints], true, false); // Use batch operation for bulk sprint generation (not regeneration)
   };
 
   return (

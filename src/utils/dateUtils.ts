@@ -9,10 +9,17 @@ import {
   startOfWeek,
   endOfWeek,
   eachDayOfInterval,
+  isWeekend,
   getQuarter,
   getYear
 } from 'date-fns';
 import { Sprint, SprintConfig, PublicHoliday, TeamMember, PersonalHoliday, Skill, WorkItem } from '../types';
+
+// Helper function to calculate working days in a sprint (excluding weekends)
+const getWorkingDaysInSprint = (startDate: Date, endDate: Date): number => {
+  const days = eachDayOfInterval({ start: startDate, end: endDate });
+  return days.filter(day => !isWeekend(day)).length;
+};
 
 // Quarter utility functions
 export const getQuarterInfo = (date: Date) => {
@@ -98,24 +105,57 @@ export const calculateSprintCapacity = (
   teamMembers: TeamMember[],
   publicHolidays: PublicHoliday[]
 ): number => {
+  console.log(`🎯 ═══ CAPACITY CALCULATION START: ${sprint.name} ═══`);
+  console.log(`📅 Sprint Period: ${format(sprint.startDate, 'MMM dd')} - ${format(sprint.endDate, 'MMM dd, yyyy')}`);
+  
   // Start with the planned velocity
   let capacity = sprint.plannedVelocity;
+  
+  console.log(`📊 STEP 1: Initial Planned Velocity = ${sprint.plannedVelocity} points`);
+  console.log(`👥 Team Configuration: ${teamMembers.length} members, ${publicHolidays.length} public holidays configured`);
   
   // Reduce capacity for public holidays
   const holidaysInSprint = publicHolidays.filter(holiday =>
     isWithinInterval(holiday.date, { start: sprint.startDate, end: sprint.endDate })
   );
   
+    // Calculate actual working days in sprint (excluding weekends)
+  const sprintWorkingDays = getWorkingDaysInSprint(sprint.startDate, sprint.endDate);
+  
+  console.log(`📅 STEP 2: Sprint Working Days Analysis`);
+  console.log(`   • Total calendar days in sprint: ${differenceInDays(sprint.endDate, sprint.startDate) + 1}`);
+  console.log(`   • Working days (excluding weekends): ${sprintWorkingDays}`);
+  console.log(`   • Public holidays found in sprint: ${holidaysInSprint.length}`);
+  if (holidaysInSprint.length > 0) {
+    console.log(`   • Holiday details:`, holidaysInSprint.map(h => `"${h.name}" (${format(h.date, 'MMM dd')})`));
+  }
+  
+  // Calculate realistic holiday impact based on actual working days lost
   const totalPublicHolidayImpact = holidaysInSprint.reduce(
-    (total, holiday) => total + (holiday.impactPercentage / 100),
+    (total, holiday) => {
+      // Each public holiday removes 1 working day
+      // Impact = 1 day / total working days in sprint
+      const holidayImpact = 1 / sprintWorkingDays;
+      console.log(`   📉 "${holiday.name}": -${holidayImpact * 100}% impact (1 day out of ${sprintWorkingDays} working days)`);
+      return total + holidayImpact;
+    },
     0
   );
+
+  const capacityAfterPublicHolidays = capacity * (1 - totalPublicHolidayImpact);
+  console.log(`📊 STEP 3: After Public Holidays`);
+  console.log(`   • Total public holiday impact: -${(totalPublicHolidayImpact * 100).toFixed(1)}%`);
+  console.log(`   • Capacity: ${capacity} → ${capacityAfterPublicHolidays.toFixed(1)} points`);
   
-  capacity *= (1 - totalPublicHolidayImpact);
+  capacity = capacityAfterPublicHolidays;
   
-  // Reduce capacity for personal holidays
+    // Reduce capacity for personal holidays
   const totalTeamCapacity = teamMembers.reduce((total, member) => total + member.capacity, 0);
   let personalHolidayReduction = 0;
+  
+  console.log(`👤 STEP 4: Personal Holidays Analysis`);
+  console.log(`   • Total team capacity points: ${totalTeamCapacity}`);
+  console.log(`   • Team members: ${teamMembers.map(m => `${m.name}(${m.capacity}pts)`).join(', ')}`);
   
   teamMembers.forEach(member => {
     const memberHolidaysInSprint = member.personalHolidays.filter(holiday =>
@@ -124,62 +164,9 @@ export const calculateSprintCapacity = (
       isWithinInterval(holiday.startDate, { start: sprint.startDate, end: sprint.endDate })
     );
     
-    memberHolidaysInSprint.forEach(holiday => {
-      const overlapStart = holiday.startDate > sprint.startDate ? holiday.startDate : sprint.startDate;
-      const overlapEnd = holiday.endDate < sprint.endDate ? holiday.endDate : sprint.endDate;
-      const overlapDays = differenceInDays(overlapEnd, overlapStart) + 1;
-      const sprintDays = differenceInDays(sprint.endDate, sprint.startDate) + 1;
-      const memberContribution = member.capacity / 100;
-      const memberImpact = (overlapDays / sprintDays) * memberContribution;
-      
-      personalHolidayReduction += memberImpact;
-    });
-  });
-  
-  capacity *= (1 - personalHolidayReduction);
-  
-  return Math.max(0, capacity);
-};
-
-export const calculateSkillSpecificCapacity = (
-  sprint: Sprint,
-  teamMembers: TeamMember[],
-  publicHolidays: PublicHoliday[],
-  skill: Skill
-): number => {
-  // Start with the planned velocity, but scale by skill availability
-  const skillMembers = teamMembers.filter(member => member.skills.includes(skill));
-  const totalTeamCapacity = teamMembers.reduce((total, member) => total + member.capacity, 0);
-  const skillTeamCapacity = skillMembers.reduce((total, member) => total + member.capacity, 0);
-  
-  if (totalTeamCapacity === 0 || skillTeamCapacity === 0) {
-    return 0;
-  }
-  
-  // Scale planned velocity by skill team ratio
-  let capacity = sprint.plannedVelocity * (skillTeamCapacity / totalTeamCapacity);
-  
-  // Reduce capacity for public holidays
-  const holidaysInSprint = publicHolidays.filter(holiday =>
-    isWithinInterval(holiday.date, { start: sprint.startDate, end: sprint.endDate })
-  );
-  
-  const totalPublicHolidayImpact = holidaysInSprint.reduce(
-    (total, holiday) => total + (holiday.impactPercentage / 100),
-    0
-  );
-  
-  capacity *= (1 - totalPublicHolidayImpact);
-  
-  // Reduce capacity for personal holidays of skill-specific team members
-  let personalHolidayReduction = 0;
-  
-  skillMembers.forEach(member => {
-    const memberHolidaysInSprint = member.personalHolidays.filter(holiday =>
-      isWithinInterval(sprint.startDate, { start: holiday.startDate, end: holiday.endDate }) ||
-      isWithinInterval(sprint.endDate, { start: holiday.startDate, end: holiday.endDate }) ||
-      isWithinInterval(holiday.startDate, { start: sprint.startDate, end: sprint.endDate })
-    );
+    if (memberHolidaysInSprint.length > 0) {
+      console.log(`   👤 ${member.name} has ${memberHolidaysInSprint.length} personal holiday(s):`);
+    }
     
     memberHolidaysInSprint.forEach(holiday => {
       const overlapStart = holiday.startDate > sprint.startDate ? holiday.startDate : sprint.startDate;
@@ -189,13 +176,148 @@ export const calculateSkillSpecificCapacity = (
       const memberContribution = member.capacity / 100;
       const memberImpact = (overlapDays / sprintDays) * memberContribution;
       
+      console.log(`      📉 "${holiday.name}": ${overlapDays} days out of ${sprintDays} = -${(memberImpact * 100).toFixed(1)}% impact`);
       personalHolidayReduction += memberImpact;
     });
   });
+
+  const capacityAfterPersonalHolidays = capacity * (1 - personalHolidayReduction);
+  console.log(`📊 STEP 5: After Personal Holidays`);
+  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}%`);
+  console.log(`   • Capacity: ${capacity.toFixed(1)} → ${capacityAfterPersonalHolidays.toFixed(1)} points`);
   
-  capacity *= (1 - personalHolidayReduction);
+  capacity = capacityAfterPersonalHolidays;
   
-  return Math.max(0, capacity);
+  const finalCapacity = Math.max(0, capacity);
+  console.log(`🎯 ═══ CAPACITY CALCULATION FINAL: ${sprint.name} ═══`);
+  console.log(`✅ FINAL AVAILABLE POINTS: ${finalCapacity.toFixed(1)} points`);
+  console.log(`📈 Summary:`);
+  console.log(`   • Started with: ${sprint.plannedVelocity} points`);
+  console.log(`   • After public holidays: ${capacityAfterPublicHolidays.toFixed(1)} points`);
+  console.log(`   • After personal holidays: ${capacityAfterPersonalHolidays.toFixed(1)} points`);
+  console.log(`   • Final capacity: ${finalCapacity.toFixed(1)} points`);
+  console.log(`🎯 ═══════════════════════════════════════════════════`);
+  return finalCapacity;
+};
+
+export const calculateSkillSpecificCapacity = (
+  sprint: Sprint,
+  teamMembers: TeamMember[],
+  publicHolidays: PublicHoliday[],
+  skill: Skill
+): number => {
+  console.log(`🎯 ═══ ${skill.toUpperCase()} CAPACITY CALCULATION: ${sprint.name} ═══`);
+  
+  // Start with the planned velocity, but scale by skill availability
+  const skillMembers = teamMembers.filter(member => member.skills.includes(skill));
+  const totalTeamCapacity = teamMembers.reduce((total, member) => total + member.capacity, 0);
+  const skillTeamCapacity = skillMembers.reduce((total, member) => total + member.capacity, 0);
+  
+  console.log(`📊 STEP 1: ${skill.charAt(0).toUpperCase() + skill.slice(1)} Team Analysis`);
+  console.log(`   • ${skill} team members: ${skillMembers.length} (${skillMembers.map(m => `${m.name}(${m.capacity}pts)`).join(', ')})`);
+  console.log(`   • ${skill} team capacity: ${skillTeamCapacity} points`);
+  console.log(`   • Total team capacity: ${totalTeamCapacity} points`);
+  
+  if (totalTeamCapacity === 0 || skillTeamCapacity === 0) {
+    console.log(`❌ No capacity for ${skill} skill: totalTeamCapacity=${totalTeamCapacity}, skillTeamCapacity=${skillTeamCapacity}`);
+    console.log(`🎯 ═══ ${skill.toUpperCase()} FINAL: 0 points ═══`);
+    return 0;
+  }
+  
+  // Scale planned velocity by skill team ratio
+  const skillPortion = skillTeamCapacity / totalTeamCapacity;
+  let capacity = sprint.plannedVelocity * skillPortion;
+  
+  console.log(`   • ${skill} portion: ${(skillPortion * 100).toFixed(1)}%`);
+  console.log(`   • Initial ${skill} capacity: ${sprint.plannedVelocity} × ${(skillPortion * 100).toFixed(1)}% = ${capacity.toFixed(1)} points`);
+  
+  // Reduce capacity for public holidays
+  const holidaysInSprint = publicHolidays.filter(holiday =>
+    isWithinInterval(holiday.date, { start: sprint.startDate, end: sprint.endDate })
+  );
+  
+  // Calculate actual working days in sprint (excluding weekends)
+  const sprintWorkingDays = getWorkingDaysInSprint(sprint.startDate, sprint.endDate);
+  
+  console.log(`📅 STEP 2: Public Holidays Impact on ${skill.charAt(0).toUpperCase() + skill.slice(1)}`);
+  console.log(`   • Working days in sprint: ${sprintWorkingDays}`);
+  console.log(`   • Public holidays found: ${holidaysInSprint.length}`);
+  
+  // Calculate realistic holiday impact based on actual working days lost
+  const totalPublicHolidayImpact = holidaysInSprint.reduce(
+    (total, holiday) => {
+      // Each public holiday removes 1 working day
+      // Impact = 1 day / total working days in sprint
+      const holidayImpact = 1 / sprintWorkingDays;
+      console.log(`   📉 "${holiday.name}": -${(holidayImpact * 100).toFixed(1)}% impact (1 day out of ${sprintWorkingDays} working days)`);
+      return total + holidayImpact;
+    },
+    0
+  );
+  
+  const capacityAfterPublicHolidays = capacity * (1 - totalPublicHolidayImpact);
+  console.log(`📊 STEP 3: After Public Holidays for ${skill.charAt(0).toUpperCase() + skill.slice(1)}`);
+  console.log(`   • Total public holiday impact: -${(totalPublicHolidayImpact * 100).toFixed(1)}%`);
+  console.log(`   • Capacity: ${capacity.toFixed(1)} → ${capacityAfterPublicHolidays.toFixed(1)} points`);
+  
+  capacity = capacityAfterPublicHolidays;
+  
+  // Reduce capacity for personal holidays of team members with this specific skill
+  let personalHolidayReduction = 0;
+  const sprintWorkingDaysTotal = getWorkingDaysInSprint(sprint.startDate, sprint.endDate);
+  
+  console.log(`👤 STEP 4: Personal Holidays for ${skill.charAt(0).toUpperCase() + skill.slice(1)} Team Members`);
+  console.log(`   • ${skill} team members: ${skillMembers.length}`);
+  console.log(`   • Checking personal holidays for: ${skillMembers.map(m => m.name).join(', ')}`);
+  
+  skillMembers.forEach(member => {
+    const memberHolidaysInSprint = member.personalHolidays.filter(holiday =>
+      isWithinInterval(sprint.startDate, { start: holiday.startDate, end: holiday.endDate }) ||
+      isWithinInterval(sprint.endDate, { start: holiday.startDate, end: holiday.endDate }) ||
+      isWithinInterval(holiday.startDate, { start: sprint.startDate, end: sprint.endDate })
+    );
+    
+        if (memberHolidaysInSprint.length > 0) {
+      console.log(`   👤 ${member.name} has ${memberHolidaysInSprint.length} personal holiday(s) affecting ${skill}:`);
+    }
+    
+    memberHolidaysInSprint.forEach(holiday => {
+      const overlapStart = holiday.startDate > sprint.startDate ? holiday.startDate : sprint.startDate;
+      const overlapEnd = holiday.endDate < sprint.endDate ? holiday.endDate : sprint.endDate;
+      
+      // Calculate working days lost (excluding weekends)
+      const holidayWorkingDays = getWorkingDaysInSprint(overlapStart, overlapEnd);
+      
+      // Impact = (working days lost) / (total working days in sprint) * (member's contribution to this skill)
+      const memberSkillContribution = member.capacity / skillTeamCapacity; // Member's share of this skill's capacity
+      const memberImpact = (holidayWorkingDays / sprintWorkingDaysTotal) * memberSkillContribution;
+      
+      console.log(`      📉 "${holiday.name}": ${holidayWorkingDays} working days × ${(memberSkillContribution * 100).toFixed(1)}% contribution = -${(memberImpact * 100).toFixed(1)}% impact`);
+      
+      personalHolidayReduction += memberImpact;
+    });
+  });
+
+  const capacityAfterPersonalHolidays = capacity * (1 - personalHolidayReduction);
+  console.log(`📊 STEP 5: After Personal Holidays for ${skill.charAt(0).toUpperCase() + skill.slice(1)}`);
+  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}%`);
+  console.log(`   • Capacity: ${capacity.toFixed(1)} → ${capacityAfterPersonalHolidays.toFixed(1)} points`);
+  
+  capacity = capacityAfterPersonalHolidays;
+  
+  const finalCapacity = Math.max(0, capacity);
+  
+  console.log(`🎯 ═══ ${skill.toUpperCase()} CAPACITY FINAL: ${sprint.name} ═══`);
+  console.log(`✅ FINAL ${skill.toUpperCase()} POINTS: ${finalCapacity.toFixed(1)} points`);
+  console.log(`📈 ${skill.charAt(0).toUpperCase() + skill.slice(1)} Summary:`);
+  console.log(`   • Started with: ${(sprint.plannedVelocity * (skillTeamCapacity / totalTeamCapacity)).toFixed(1)} points (${((skillTeamCapacity / totalTeamCapacity) * 100).toFixed(1)}% of ${sprint.plannedVelocity})`);
+  console.log(`   • After public holidays: ${capacityAfterPublicHolidays.toFixed(1)} points`);
+  console.log(`   • After personal holidays: ${capacityAfterPersonalHolidays.toFixed(1)} points`);
+  console.log(`   • Final ${skill} capacity: ${finalCapacity.toFixed(1)} points`);
+  console.log(`💡 Note: Only ${skill} team members' holidays affected this calculation`);
+  console.log(`🎯 ═══════════════════════════════════════════════════`);
+  
+  return finalCapacity;
 };
 
 export const calculateSprintSkillCapacities = (
@@ -203,10 +325,23 @@ export const calculateSprintSkillCapacities = (
   teamMembers: TeamMember[],
   publicHolidays: PublicHoliday[]
 ): { frontend: number; backend: number; total: number } => {
+  const frontend = calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'frontend');
+  const backend = calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'backend');
+  
+  // Total should be the sum of individual skill capacities for consistency
+  const total = frontend + backend;
+  
+  console.log(`🔍 calculateSprintSkillCapacities FINAL for ${sprint.name}:`, {
+    frontend,
+    backend,
+    total,
+    individualSum: frontend + backend
+  });
+  
   return {
-    frontend: calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'frontend'),
-    backend: calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'backend'),
-    total: calculateSprintCapacity(sprint, teamMembers, publicHolidays)
+    frontend,
+    backend,
+    total
   };
 };
 

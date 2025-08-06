@@ -163,7 +163,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     item.assignedSprints.length === 0 && 
     item.status !== 'Completed' &&
     !item.isEpic && // Not an epic work item
-    !item.epicId   // Not an epic child (they'll be grouped under parent)
+    !item.epicId   // Not an epic child (they'll be grouped under parent epics)
   );
   
   // TEMP DEBUG: Check what's in unassigned items
@@ -180,12 +180,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const blockedItems = getBlockedWorkItems(unassignedItems, data.workItems);
   const readyItems = unassignedItems.filter(item => !blockedItems.includes(item));
 
-  // Get epic work items with unassigned children (work items with isEpic: true)
+  // Get all epic work items that are not completed (work items with isEpic: true)
   const unassignedEpicWorkItems = data.workItems.filter(item => 
     item.isEpic && 
     item.status !== 'Completed' &&
-    item.children && item.children.length > 0 && // Show epics that have children
-    item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed') // At least one unassigned child
+    (item.assignedSprints.length === 0 || // Epic itself is unassigned OR
+     (item.children && item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed'))) // Has unassigned children
   );
 
 

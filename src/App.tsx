@@ -177,43 +177,113 @@ function App() {
     setData(prev => ({ ...prev, epics }));
   };
 
-  const updateSprints = async (sprints: any[]) => {
+  const updateSprints = async (sprints: any[], useBatchOperation: boolean = false, isRegeneration: boolean = false) => {
+    console.log('🔄 updateSprints called with:', {
+      sprintCount: sprints.length,
+      isApiConnected,
+      useBatchOperation,
+      firstSprintId: sprints[0]?.id,
+      firstSprintName: sprints[0]?.name
+    });
+    
     setData(prev => ({ ...prev, sprints }));
     
     if (isApiConnected) {
       try {
-        // Get current sprints from backend to compare
-        const currentBackendSprints = await sprintsApi.getAll();
-        
-        // Create a map of existing sprints by ID for quick lookup
-        const existingSprintsMap = new Map(currentBackendSprints.map(sprint => [sprint.id, sprint]));
-        
-        // Process each sprint in the new array
-        for (const sprint of sprints) {
-          const existingSprint = existingSprintsMap.get(sprint.id);
+        if (useBatchOperation) {
+          // Use batch endpoint for bulk operations (like config regeneration)
+          console.log('📡 Using batch operation for sprint sync...');
+          const sprintDataArray = sprints.map(sprint => transformers.sprintToApi(sprint));
+          // Pass isRegeneration flag for configuration regeneration to clear existing sprints
+          const result = await sprintsApi.batchUpdate(sprintDataArray, isRegeneration);
+          console.log('✅ Batch sprint operation completed:', result);
           
-          if (existingSprint) {
-            // Check if sprint needs updating (compare key fields)
-            const needsUpdate = 
-              existingSprint.name !== sprint.name ||
-              existingSprint.plannedVelocity !== sprint.plannedVelocity ||
-              new Date(existingSprint.startDate).getTime() !== sprint.startDate.getTime() ||
-              new Date(existingSprint.endDate).getTime() !== sprint.endDate.getTime();
+          // If this was a regeneration, reload sprint data to get correct database IDs
+          if (isRegeneration) {
+            console.log('🔄 Regeneration completed, reloading sprint data from database...');
+            const freshSprints = await sprintsApi.getAll();
+            console.log('✅ Fresh sprint data loaded:', freshSprints.length, 'sprints');
+            setData(prev => ({ ...prev, sprints: freshSprints.map(transformers.sprintFromApi) }));
+            return; // Skip local state update since we just loaded fresh data
+          }
+        } else {
+          // Use individual operations for single sprint updates
+          console.log('📡 Using individual operations for sprint sync...');
+          
+          // Get current sprints from backend to compare
+          console.log('📡 Fetching current backend sprints...');
+          const currentBackendSprints = await sprintsApi.getAll();
+          console.log('📡 Backend sprints:', {
+            count: currentBackendSprints.length,
+            ids: currentBackendSprints.map(s => s.id)
+          });
+          
+          // Create a map of existing sprints by ID for quick lookup
+          const existingSprintsMap = new Map(currentBackendSprints.map(sprint => [sprint.id, sprint]));
+          
+          // Process each sprint in the new array
+          for (const sprint of sprints) {
+            const existingSprint = existingSprintsMap.get(sprint.id);
             
-            if (needsUpdate) {
-              console.log(`🔄 Updating sprint: ${sprint.id}`);
-              await sprintsApi.update(sprint.id, transformers.sprintToApi(sprint));
+            console.log(`🔍 Processing sprint ${sprint.id}:`, {
+              exists: !!existingSprint,
+              sprintData: {
+                name: sprint.name,
+                startDate: sprint.startDate,
+                endDate: sprint.endDate,
+                plannedVelocity: sprint.plannedVelocity
+              }
+            });
+            
+            if (existingSprint) {
+              // Check if sprint needs updating (compare key fields)
+              const needsUpdate = 
+                existingSprint.name !== sprint.name ||
+                existingSprint.plannedVelocity !== sprint.plannedVelocity ||
+                new Date(existingSprint.startDate).getTime() !== sprint.startDate.getTime() ||
+                new Date(existingSprint.endDate).getTime() !== sprint.endDate.getTime();
+              
+              if (needsUpdate) {
+                console.log(`🔄 Updating sprint: ${sprint.id}`, {
+                  changes: {
+                    name: existingSprint.name !== sprint.name ? `${existingSprint.name} → ${sprint.name}` : 'unchanged',
+                    plannedVelocity: existingSprint.plannedVelocity !== sprint.plannedVelocity ? `${existingSprint.plannedVelocity} → ${sprint.plannedVelocity}` : 'unchanged',
+                    startDate: new Date(existingSprint.startDate).getTime() !== sprint.startDate.getTime() ? `${existingSprint.startDate} → ${sprint.startDate}` : 'unchanged',
+                    endDate: new Date(existingSprint.endDate).getTime() !== sprint.endDate.getTime() ? `${existingSprint.endDate} → ${sprint.endDate}` : 'unchanged'
+                  }
+                });
+                const result = await sprintsApi.update(sprint.id, transformers.sprintToApi(sprint));
+                console.log(`✅ Sprint ${sprint.id} updated successfully:`, result);
+              } else {
+                console.log(`⏭️ Sprint ${sprint.id} unchanged, skipping update`);
+              }
+            } else {
+              // Create new sprint
+              console.log(`➕ Creating new sprint: ${sprint.id}`, {
+                apiData: transformers.sprintToApi(sprint)
+              });
+              try {
+                const result = await sprintsApi.create(transformers.sprintToApi(sprint));
+                console.log(`✅ Sprint ${sprint.id} created successfully:`, result);
+              } catch (createError) {
+                console.error(`❌ Failed to create sprint ${sprint.id}:`, createError);
+                throw createError;
+              }
             }
-          } else {
-            // Create new sprint
-            console.log(`➕ Creating new sprint: ${sprint.id}`);
-            await sprintsApi.create(transformers.sprintToApi(sprint));
           }
         }
         
         console.log('✅ Sprints synchronized with backend');
       } catch (error) {
         console.error('❌ Failed to sync sprints to backend:', error);
+        // Don't throw to prevent UI from breaking, but log the full error
+        if (error instanceof Error) {
+          console.error('❌ Error details:', {
+            message: error.message,
+            stack: error.stack
+          });
+        }
+        alert(`❌ Failed to save sprint configuration to database: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   };
