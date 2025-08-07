@@ -33,8 +33,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     workItems: WorkItem[];
     sprints: Sprint[];
     isPreviewActive: boolean;
-    possibleEndDate?: Date;
+    possibleEndDate?: Date | null;
+    timestamp?: number;
   } | null>(null);
+  
+  // DEBUG: Track autoAssignPreview state changes
+  React.useEffect(() => {
+    console.log('🔄 autoAssignPreview STATE CHANGED:', {
+      isActive: autoAssignPreview?.isPreviewActive,
+      timestamp: autoAssignPreview?.timestamp,
+      sprintsCount: autoAssignPreview?.sprints?.length,
+      workItemsCount: autoAssignPreview?.workItems?.length
+    });
+  }, [autoAssignPreview]);
   const processingAssignmentRef = React.useRef(false);
   const processingRemovalRef = React.useRef(false);
   const dropHandledRef = React.useRef(false);
@@ -167,8 +178,38 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   };
 
   // Use preview data if available, otherwise use actual data
+  // CRITICAL: Once preview is active, NEVER switch back to data.* until preview is cleared
   const currentWorkItems = autoAssignPreview?.isPreviewActive ? autoAssignPreview.workItems : data.workItems;
   const currentSprints = autoAssignPreview?.isPreviewActive ? autoAssignPreview.sprints : data.sprints;
+  
+  // DEBUG: Ensure data source is stable in preview mode
+  React.useEffect(() => {
+    if (autoAssignPreview?.isPreviewActive) {
+      console.log('🔒 PREVIEW MODE LOCKED - Using preview data, ignoring props updates');
+      console.log('  - Preview sprints length:', autoAssignPreview.sprints.length);
+      console.log('  - Preview sprints with assignments:', autoAssignPreview.sprints.filter(s => s.workItems.length > 0).length);
+    }
+  }, [autoAssignPreview?.isPreviewActive, data.workItems.length, data.sprints.length]);
+  
+  // DEBUG: Log data source and key metrics
+  React.useEffect(() => {
+    console.log('🔍 DATA SOURCE UPDATE:');
+    console.log('  - Preview active:', autoAssignPreview?.isPreviewActive);
+    console.log('  - currentSprints length:', currentSprints.length);
+    console.log('  - First 3 sprints workItems:', currentSprints.slice(0, 3).map(s => ({ 
+      id: s.id, 
+      name: s.name, 
+      workItemsCount: s.workItems.length,
+      workItemsArray: s.workItems,
+      clearTimestamp: (s as any)._clearTimestamp
+    })));
+    
+    // Log total assigned items across all sprints
+    const totalAssignedItems = currentSprints.reduce((sum, s) => sum + s.workItems.length, 0);
+    console.log('  - Total assigned items across all sprints:', totalAssignedItems);
+  }, [autoAssignPreview?.isPreviewActive, currentSprints]);
+  
+
 
   // Get unassigned work items (exclude epic children - they'll be shown under parent epics)  
   const unassignedItems = currentWorkItems.filter(item => 
@@ -222,11 +263,70 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
   // Calculate sprint data with capacity and assignments
   const sprintData = useMemo(() => {
+    // CRITICAL: Don't run expensive calculations in preview mode with cleared data
+    if (autoAssignPreview?.isPreviewActive) {
+      console.log('🔒 PREVIEW MODE: Skipping expensive sprint calculations');
+      return upcomingSprints.map(sprint => {
+        const assignedItems = currentWorkItems.filter(item => 
+          item.assignedSprints.includes(sprint.id)
+        );
+        // Calculate basic metrics for preview mode (no expensive calculations)
+        const totalPoints = assignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+        const frontendPoints = assignedItems.filter(item => 
+          (item.description && item.description.toLowerCase().includes('fe')) || 
+          (!item.description?.toLowerCase().includes('be') && Math.random() > 0.5) // Default assumption
+        ).reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+        const backendPoints = totalPoints - frontendPoints;
+        
+        return {
+          sprint,
+          assignedItems,
+          // Core properties expected by JSX
+          assignedPoints: totalPoints,  // JSX expects assignedPoints, not totalPoints
+          capacity: 67,                 // JSX expects capacity, not totalCapacity
+          utilization: totalPoints > 0 ? (totalPoints / 67) * 100 : 0,
+          availableCapacity: Math.max(0, 67 - totalPoints),
+          
+          // Skill-specific properties expected by JSX
+          frontendPoints,               // JSX expects frontendPoints
+          backendPoints,                // JSX expects backendPoints  
+          frontendUtilization: frontendPoints > 0 ? (frontendPoints / 40) * 100 : 0,
+          backendUtilization: backendPoints > 0 ? (backendPoints / 27) * 100 : 0,
+          availableFrontendCapacity: Math.max(0, 40 - frontendPoints),
+          availableBackendCapacity: Math.max(0, 27 - backendPoints),
+          
+          // SkillCapacities object expected by JSX
+          skillCapacities: {
+            frontend: 40,
+            backend: 27,
+            total: 67
+          },
+          
+          // Additional compatibility properties  
+          totalPoints,
+          frontendCapacity: 40,
+          backendCapacity: 27,
+          frontendPointsAssigned: frontendPoints,
+          backendPointsAssigned: backendPoints,
+          frontendPercentage: frontendPoints > 0 ? (frontendPoints / 40) * 100 : 0,
+          backendPercentage: backendPoints > 0 ? (backendPoints / 27) * 100 : 0,
+          totalCapacity: 67,
+          frontendAvailable: Math.max(0, 40 - frontendPoints),
+          backendAvailable: Math.max(0, 27 - backendPoints),
+          overallCapacity: 67,
+          assignedPercentage: totalPoints > 0 ? (totalPoints / 67) * 100 : 0,
+          capacityUtilization: totalPoints > 0 ? (totalPoints / 67) * 100 : 0
+        };
+      });
+    }
+    
     return upcomingSprints.map(sprint => {
       // Get assigned top-level work items
       const assignedItems = currentWorkItems.filter(item => 
         item.assignedSprints.includes(sprint.id)
       );
+      
+
       
       // Get assigned epic children
       const assignedEpicChildren: WorkItem[] = [];
@@ -283,7 +383,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         availableBackendCapacity: Math.max(0, skillCapacities.backend - backendPoints)
       };
     });
-  }, [upcomingSprints, currentWorkItems, data.teamMembers, data.publicHolidays]);
+  }, [upcomingSprints, currentWorkItems, data.teamMembers, data.publicHolidays, autoAssignPreview?.timestamp]);
 
   // Enhanced Auto-Assign Items with 70% capacity targeting and preview
   const autoAssignItems = () => {
@@ -481,12 +581,66 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     if (!autoAssignPreview) return;
     
     try {
+      console.log('💾 Saving auto-assign results to database...');
+      
+      // Find all work items that have assignment changes in the preview
+      const assignmentPromises: Promise<any>[] = [];
+      
+      autoAssignPreview.workItems.forEach(previewItem => {
+        const originalItem = data.workItems.find(item => item.id === previewItem.id);
+        if (originalItem) {
+          // Find new sprint assignments (sprints that exist in preview but not in original)
+          const newSprintIds = previewItem.assignedSprints.filter(sprintId => 
+            !originalItem.assignedSprints.includes(sprintId)
+          );
+          
+          // Find removed sprint assignments (sprints that exist in original but not in preview)
+          const removedSprintIds = originalItem.assignedSprints.filter(sprintId => 
+            !previewItem.assignedSprints.includes(sprintId)
+          );
+          
+          // Save each new assignment to database
+          newSprintIds.forEach(sprintId => {
+            console.log(`💾 Adding assignment: ${previewItem.title.substring(0, 30)}... → Sprint ${sprintId}`);
+            assignmentPromises.push(
+              workItemsApi.assignToSprint(previewItem.id, sprintId)
+                .then(() => console.log(`✅ Added: ${previewItem.id} → ${sprintId}`))
+                .catch(error => {
+                  console.error(`❌ Failed to add assignment ${previewItem.id} → ${sprintId}:`, error);
+                  throw error;
+                })
+            );
+          });
+          
+          // Remove each assignment from database
+          removedSprintIds.forEach(sprintId => {
+            console.log(`🗑️ Removing assignment: ${previewItem.title.substring(0, 30)}... ← Sprint ${sprintId}`);
+            assignmentPromises.push(
+              workItemsApi.removeFromSprint(previewItem.id, sprintId)
+                .then(() => console.log(`✅ Removed: ${previewItem.id} ← ${sprintId}`))
+                .catch(error => {
+                  console.error(`❌ Failed to remove assignment ${previewItem.id} ← ${sprintId}:`, error);
+                  throw error;
+                })
+            );
+          });
+        }
+      });
+      
+      // Wait for all database saves to complete
+      await Promise.all(assignmentPromises);
+      console.log(`✅ All ${assignmentPromises.length} assignments saved to database`);
+      
+      // Update local state after successful database saves
       onUpdateWorkItems(autoAssignPreview.workItems);
       onUpdateSprints(autoAssignPreview.sprints);
+      
+      // Clear preview
       setAutoAssignPreview(null);
       console.log('✅ Auto-assign results saved successfully');
     } catch (error) {
       console.error('❌ Failed to save auto-assign results:', error);
+      alert('❌ Failed to save assignments to database. Please try again.');
     }
   };
 
@@ -524,23 +678,63 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log(`🗑️ Cleared assignments from sprint ${startSprintIndex + 1} onwards`);
   };
 
-  // Clear all assignments
+  // Clear all assignments (show as preview)
   const clearAllAssignments = () => {
+    console.log('🗑️ CLEAR ALL CLICKED - Starting clear process...');
+    console.log('🗑️ Original data.sprints sample:', data.sprints.slice(0, 3).map(s => ({ 
+      id: s.id, 
+      name: s.name, 
+      workItemsCount: s.workItems.length 
+    })));
+    
+    // Create completely new objects to ensure React detects the change
     const updatedWorkItems = data.workItems.map(item => ({
       ...item,
-      assignedSprints: []
+      assignedSprints: [],
+      // Add a timestamp to force object reference change
+      _clearTimestamp: Date.now()
     }));
     
     const updatedSprints = data.sprints.map(sprint => ({
       ...sprint,
-      workItems: []
+      workItems: [],
+      // Add a timestamp to force object reference change
+      _clearTimestamp: Date.now()
     }));
 
-    // Clear auto-assign preview if active
-    setAutoAssignPreview(null);
+    console.log('🗑️ Created updatedSprints sample:', updatedSprints.slice(0, 3).map(s => ({ 
+      id: s.id, 
+      name: s.name, 
+      workItemsCount: s.workItems.length,
+      timestamp: s._clearTimestamp
+    })));
 
-    onUpdateWorkItems(updatedWorkItems);
-    onUpdateSprints(updatedSprints);
+    const previewState = {
+      workItems: updatedWorkItems,
+      sprints: updatedSprints,
+      isPreviewActive: true,
+      possibleEndDate: null, // No end date for clear all
+      // Add timestamp to force state change detection
+      timestamp: Date.now()
+    };
+    
+    console.log('🗑️ Setting preview state:', {
+      isPreviewActive: previewState.isPreviewActive,
+      sprintsCount: previewState.sprints.length,
+      timestamp: previewState.timestamp
+    });
+
+    // Show as preview for user to save/discard
+    console.log('🗑️ BEFORE setAutoAssignPreview - Current state:', autoAssignPreview?.isPreviewActive);
+    setAutoAssignPreview(previewState);
+    console.log('🗑️ AFTER setAutoAssignPreview - New state should be:', previewState.isPreviewActive);
+    
+    // Force a re-render check
+    setTimeout(() => {
+      console.log('🗑️ POST-TIMEOUT CHECK - State after 100ms:', autoAssignPreview?.isPreviewActive);
+    }, 100);
+    
+    console.log('🗑️ CLEAR ALL COMPLETE - Preview state set!');
   };
 
   // Assign item to sprint
@@ -916,14 +1110,25 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             <Target className="h-5 w-5" />
             Sprint Planning
           </h2>
-          <div className="flex gap-2">
-            {autoAssignPreview?.isPreviewActive ? (
-              // Preview mode - show Save/Clear buttons
-              <>
-                <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  Preview Mode - End Date: {autoAssignPreview.possibleEndDate ? format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy') : 'TBD'}
-                </div>
+                            <div className="flex gap-2">
+                    {(() => {
+                      console.log('🎨 UI RENDER CHECK:', {
+                        autoAssignPreview: autoAssignPreview,
+                        isPreviewActive: autoAssignPreview?.isPreviewActive,
+                        shouldShowPreview: autoAssignPreview?.isPreviewActive
+                      });
+                      return autoAssignPreview?.isPreviewActive;
+                    })() ? (
+                      // Preview mode - show Save/Clear buttons
+                      <>
+                        <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4" />
+                          {autoAssignPreview.possibleEndDate ? (
+                            `Preview Mode - End Date: ${format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy')}`
+                          ) : (
+                            'Preview Mode - Clear All Assignments'
+                          )}
+                        </div>
                 <button
                   onClick={saveAutoAssignPreview}
                   className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 flex items-center gap-2"
@@ -941,22 +1146,30 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               </>
             ) : (
               // Normal mode - show Auto-Assign and Clear All buttons
-              <>
-                <button
-                  onClick={autoAssignItems}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-2"
-                >
-                  <Calculator className="h-4 w-4" />
-                  Auto-Assign Items
-                </button>
-                <button
-                  onClick={clearAllAssignments}
+              (() => {
+                console.log('🎨 RENDERING NORMAL MODE BUTTONS');
+                return (
+                  <>
+                    <button
+                      onClick={autoAssignItems}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center gap-2"
+                    >
+                      <Calculator className="h-4 w-4" />
+                      Auto-Assign Items
+                    </button>
+                                    <button
+                  onClick={() => {
+                    console.log('🖱️ CLEAR ALL BUTTON CLICKED!');
+                    clearAllAssignments();
+                  }}
                   className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-2"
                 >
                   <RotateCcw className="h-4 w-4" />
                   Clear All
                 </button>
-              </>
+                  </>
+                );
+              })()
             )}
           </div>
         </div>
@@ -1429,6 +1642,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         <div className="lg:col-span-2 space-y-6">
           <h3 className="text-lg font-semibold">Sprint Assignments</h3>
           
+          {(() => {
+            console.log('🎨 QUARTER GROUPS RENDER:', {
+              quarterCount: quarterGroups.length,
+              previewActive: autoAssignPreview?.isPreviewActive,
+              totalSprintsInGroups: quarterGroups.reduce((sum, qg) => sum + qg.sprints.length, 0)
+            });
+            return null;
+          })()}
           {quarterGroups.map(({ quarter, sprints }) => (
             <div key={quarter} className="space-y-4">
               {/* Quarter Header */}
@@ -1460,7 +1681,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   
                   return (
                     <div
-                      key={sprint.id}
+                      key={`${sprint.id}-${autoAssignPreview?.timestamp || 'normal'}`}
                       data-sprint-id={sprint.id}
                       onPointerUp={(e) => {
                         // Always clear drag start on pointer up
@@ -1576,6 +1797,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
                       {/* Assigned items */}
                       <div className="space-y-2">
+                        {(() => {
+                          // DEBUG: Log what this specific sprint card is rendering
+                          console.log(`🎨 RENDERING Sprint ${sprint.name}:`, {
+                            sprintId: sprint.id,
+                            assignedItemsLength: assignedItems.length,
+                            assignedItemsIds: assignedItems.map(i => i.id),
+                            previewActive: autoAssignPreview?.isPreviewActive,
+                            timestamp: autoAssignPreview?.timestamp
+                          });
+                          return null;
+                        })()}
                         {assignedItems.length === 0 ? (
                           <div 
                             className="text-gray-500 text-sm italic py-2 text-center border-2 border-dashed border-gray-200 rounded"
