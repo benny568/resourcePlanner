@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { WorkItem, Skill } from '../types';
-import { Plus, Trash2, Edit3, CheckCircle, Clock, AlertCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, Edit3, CheckCircle, Clock, AlertCircle, ChevronDown, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { workItemsApi, transformers } from '../services/api';
 
@@ -17,6 +17,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+  const [refreshingEpics, setRefreshingEpics] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -172,6 +173,128 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
       } finally {
         setIsLoading(false);
       }
+    }
+  };
+
+  const refreshEpicChildren = async (epicWorkItem: WorkItem) => {
+    if (!epicWorkItem.isEpic || !epicWorkItem.jiraId) {
+      console.error('Cannot refresh: not an epic or missing Jira ID');
+      return;
+    }
+
+    const epicKey = epicWorkItem.jiraId;
+    console.log(`🔄 Refreshing epic children for ${epicKey}...`);
+    
+    // Add to refreshing set
+    setRefreshingEpics(prev => new Set(prev).add(epicKey));
+
+    try {
+      // Fetch fresh epic data from Jira
+      const response = await fetch('/api/jira/epic-with-children', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epicKey })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch epic from Jira: ${response.status} ${response.statusText}`);
+      }
+
+      const freshEpicData = await response.json();
+      console.log(`📝 Fresh epic data: ${freshEpicData.children.length} children from Jira`);
+
+      // Get existing children from database
+      const existingChildren = workItems.filter(item => item.epicId === epicWorkItem.id);
+      const existingChildrenJiraIds = new Set(existingChildren.map(child => child.jiraId));
+      
+      console.log(`🔍 Found ${existingChildren.length} existing children in database`);
+
+      // Find new children that aren't in the database yet
+      const newChildren = freshEpicData.children.filter((child: any) => 
+        !existingChildrenJiraIds.has(child.jiraId)
+      );
+
+      console.log(`➕ Found ${newChildren.length} new children to add`);
+
+      // Save new children to database
+      const savedNewChildren: WorkItem[] = [];
+      for (const child of newChildren) {
+        console.log(`💾 Saving new epic child: ${child.title}`);
+        
+        const childWorkItem = {
+          id: child.id,
+          jiraId: child.jiraId,
+          title: child.title,
+          description: child.description,
+          estimateStoryPoints: child.estimateStoryPoints,
+          requiredCompletionDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
+          requiredSkills: child.requiredSkills,
+          dependencies: [],
+          status: child.status,
+          jiraStatus: child.jiraStatus,
+          assignedSprints: [],
+          isEpic: false,
+          epicId: epicWorkItem.id // Link to parent epic
+        };
+
+        try {
+          const childApiData = transformers.workItemToApi(childWorkItem);
+          const savedChild = await workItemsApi.create(childApiData);
+          const transformedChild = transformers.workItemFromApi(savedChild);
+          savedNewChildren.push(transformedChild);
+          console.log(`✅ Saved new epic child: ${child.title}`);
+        } catch (error) {
+          console.error(`❌ Failed to save new epic child ${child.title}:`, error);
+          // Continue with other children even if one fails
+        }
+      }
+
+      // Update work items with the new children
+      if (savedNewChildren.length > 0) {
+        // Add new children to the main work items array
+        const updatedWorkItems = [...workItems, ...savedNewChildren];
+        
+        // Get ALL children for this epic (existing + new) from the updated work items
+        const allEpicChildren = updatedWorkItems.filter(item => item.epicId === epicWorkItem.id);
+        
+        // Update the epic work item's children property for display
+        const updatedEpic = {
+          ...epicWorkItem,
+          children: allEpicChildren
+        };
+        
+        // Replace the epic in the work items array with the updated version
+        const finalWorkItems = updatedWorkItems.map(item => 
+          item.id === epicWorkItem.id ? updatedEpic : item
+        );
+        
+        console.log(`🔄 Epic refresh debug:`, {
+          epicId: epicWorkItem.id,
+          existingChildrenBefore: epicWorkItem.children?.length || 0,
+          newChildrenAdded: savedNewChildren.length,
+          allChildrenAfter: allEpicChildren.length,
+          updatedEpicChildren: updatedEpic.children.length
+        });
+        
+        onUpdateWorkItems(finalWorkItems);
+        console.log(`✅ Epic refreshed: Added ${savedNewChildren.length} new children`);
+        
+        alert(`✅ Epic refreshed! Added ${savedNewChildren.length} new ticket(s):\n\n${savedNewChildren.map(child => `• ${child.title}`).join('\n')}`);
+      } else {
+        console.log('✅ Epic is up to date - no new children found');
+        alert('✅ Epic is up to date - no new tickets found in Jira');
+      }
+
+    } catch (error) {
+      console.error(`❌ Failed to refresh epic ${epicKey}:`, error);
+      alert(`❌ Failed to refresh epic: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      // Remove from refreshing set
+      setRefreshingEpics(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(epicKey);
+        return newSet;
+      });
     }
   };
 
@@ -475,6 +598,19 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                           )}
                           
                           {/* Action Buttons */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              refreshEpicChildren(item);
+                            }}
+                            className={`p-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors ${
+                              refreshingEpics.has(item.jiraId || '') ? 'animate-spin' : ''
+                            }`}
+                            title={`Refresh epic children from Jira for ${item.jiraId}`}
+                            disabled={refreshingEpics.has(item.jiraId || '')}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
