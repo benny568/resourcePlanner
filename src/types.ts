@@ -31,6 +31,7 @@ export interface WorkItem {
   epicId?: string; // Optional Epic ID if this work item belongs to an epic
   // Epic work item properties
   isEpic?: boolean; // True if this work item is actually an epic
+  priority?: 'Critical' | 'High' | 'Medium' | 'Low'; // Epic priority level for auto-assign
   children?: WorkItem[]; // Child work items (only for epic work items)
 }
 
@@ -67,6 +68,7 @@ export interface SprintConfig {
   firstSprintStartDate: Date;
   sprintDurationDays: number;
   defaultVelocity: number;
+  startingQuarterSprintNumber: number;
 }
 
 export interface ResourcePlanningData {

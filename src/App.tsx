@@ -12,6 +12,7 @@ import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Downloa
 import { TeamMember, WorkItem, Epic, Sprint, PublicHoliday, SprintConfig } from './types';
 import { generateSprintsForYear } from './utils/dateUtils';
 import { teamMembersApi, workItemsApi, sprintsApi, holidaysApi, sprintConfigApi, transformers } from './services/api';
+import { detectSkillsFromContent } from './utils/skillDetection';
 
 interface AppData {
   teamMembers: TeamMember[];
@@ -36,7 +37,8 @@ function App() {
     sprintConfig: {
       firstSprintStartDate: new Date('2025-01-06'),
       sprintDurationDays: 14,
-      defaultVelocity: 20
+      defaultVelocity: 20,
+      startingQuarterSprintNumber: 1
     }
   });
   const [isApiConnected, setIsApiConnected] = useState(false);
@@ -77,37 +79,7 @@ function App() {
         ]);
         console.log('📦 Received data - workItems count:', workItems.length);
 
-                    // Utility function to detect skills from title and description
-            const detectSkillsFromContent = (workItem: any) => {
-              const title = workItem.title?.toLowerCase() || '';
-              const description = workItem.description?.toLowerCase() || '';
-              
-              // Check for explicit skill indicators in title (more reliable)
-              const titleHasBackend = title.includes('be:') || title.includes('backend');
-              const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
-              
-              // Check if title or description contains BE or FE indicators
-              const hasBackendIndicator = title.includes('be') || description.includes('be');
-              const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
-              
-              // Apply automatic skill determination - prioritize title over description
-              if (titleHasFrontend && !titleHasBackend) {
-                // Title explicitly indicates frontend
-                return ['frontend'];
-              } else if (titleHasBackend && !titleHasFrontend) {
-                // Title explicitly indicates backend
-                return ['backend'];
-              } else if (hasBackendIndicator && !hasFrontendIndicator) {
-                // Fall back to description analysis - backend only
-                return ['backend'];
-              } else if (hasFrontendIndicator && !hasBackendIndicator) {
-                // Fall back to description analysis - frontend only
-                return ['frontend'];
-              } else {
-                // Keep existing skills if no clear indicators
-                return workItem.requiredSkills;
-              }
-            };
+                    // Use the enhanced skill detection function
 
         // Transform work items - ALL items from database should be treated as work items
         const transformedWorkItems = workItems.map(item => {
@@ -177,7 +149,7 @@ function App() {
     setData(prev => ({ ...prev, epics }));
   };
 
-  const updateSprints = async (sprints: any[], useBatchOperation: boolean = false, isRegeneration: boolean = false) => {
+  const updateSprints = async (sprints: any[], useBatchOperation: boolean = false, isRegeneration: boolean = false, skipBackendSync: boolean = false) => {
     console.log('🔄 updateSprints called with:', {
       sprintCount: sprints.length,
       isApiConnected,
@@ -187,6 +159,12 @@ function App() {
     });
     
     setData(prev => ({ ...prev, sprints }));
+    
+    // Skip backend sync if explicitly requested (e.g., when data is already synced)
+    if (skipBackendSync) {
+      console.log('⏭️ Skipping backend sync as requested');
+      return;
+    }
     
     if (isApiConnected) {
       try {

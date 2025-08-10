@@ -68,8 +68,11 @@ export const generateSprintsForYear = (config: SprintConfig, year: number = new 
   let currentSprintStart = config.firstSprintStartDate;
   let sprintNumber = 1;
   
-  // Track sprint numbers per quarter
+  // Track sprint numbers per quarter, starting from the configured number
   const quarterSprintNumbers: { [key: string]: number } = {};
+  
+  // Determine the starting quarter from the first sprint start date
+  const { quarterString: startingQuarter } = getQuarterInfo(currentSprintStart);
   
   while (currentSprintStart <= yearEnd) {
     const sprintEnd = addDays(currentSprintStart, config.sprintDurationDays - 1);
@@ -77,7 +80,13 @@ export const generateSprintsForYear = (config: SprintConfig, year: number = new 
     
     // Initialize or increment sprint number for this quarter
     if (!quarterSprintNumbers[quarterString]) {
-      quarterSprintNumbers[quarterString] = 1;
+      // For the starting quarter, use the configured starting sprint number
+      if (quarterString === startingQuarter) {
+        quarterSprintNumbers[quarterString] = config.startingQuarterSprintNumber;
+      } else {
+        // For subsequent quarters, always start from 1
+        quarterSprintNumbers[quarterString] = 1;
+      }
     } else {
       quarterSprintNumbers[quarterString]++;
     }

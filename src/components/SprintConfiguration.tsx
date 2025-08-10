@@ -20,7 +20,8 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   const [formData, setFormData] = useState({
     firstSprintStartDate: format(sprintConfig.firstSprintStartDate, 'yyyy-MM-dd'),
     sprintDurationDays: sprintConfig.sprintDurationDays,
-    defaultVelocity: sprintConfig.defaultVelocity
+    defaultVelocity: sprintConfig.defaultVelocity,
+    startingQuarterSprintNumber: sprintConfig.startingQuarterSprintNumber || 1
   });
   
   const [isUpdating, setIsUpdating] = useState(false);
@@ -40,7 +41,8 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
       const newConfig: SprintConfig = {
         firstSprintStartDate: new Date(formData.firstSprintStartDate),
         sprintDurationDays: formData.sprintDurationDays,
-        defaultVelocity: formData.defaultVelocity
+        defaultVelocity: formData.defaultVelocity,
+        startingQuarterSprintNumber: formData.startingQuarterSprintNumber
       };
 
       await onUpdateSprintConfig(newConfig);
@@ -89,7 +91,7 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
           Sprint Configuration
         </h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium mb-1">
               First Sprint Start Date
@@ -137,6 +139,27 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
               className="w-full px-3 py-2 border rounded-md"
             />
           </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Starting Quarter Sprint Number
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={formData.startingQuarterSprintNumber}
+              onChange={(e) => setFormData({ 
+                ...formData, 
+                startingQuarterSprintNumber: Number(e.target.value)
+              })}
+              className="w-full px-3 py-2 border rounded-md"
+              placeholder="e.g., 3 for Sprint 3"
+            />
+            <div className="text-xs text-gray-500 mt-1">
+              Which sprint number to start from in the quarter
+            </div>
+          </div>
         </div>
 
         <button
@@ -165,6 +188,7 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
           <div className="text-sm space-y-1">
             <div>• Sprint Duration: {sprintConfig.sprintDurationDays} days</div>
             <div>• Default Velocity: {sprintConfig.defaultVelocity} story points per sprint</div>
+            <div>• Starting Quarter Sprint Number: {sprintConfig.startingQuarterSprintNumber || 1}</div>
             <div>• First Sprint Starts: {format(sprintConfig.firstSprintStartDate, 'MMM dd, yyyy')}</div>
             <div>• Generated Sprints: {sprints.length}</div>
           </div>

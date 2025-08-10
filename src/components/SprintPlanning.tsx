@@ -4,11 +4,12 @@ import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, 
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
+import { detectSkillsFromContent } from '../utils/skillDetection';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
   onUpdateWorkItems: (workItems: WorkItem[]) => void;
-  onUpdateSprints: (sprints: Sprint[]) => void;
+  onUpdateSprints: (sprints: Sprint[], useBatchOperation?: boolean, isRegeneration?: boolean, skipBackendSync?: boolean) => void;
 }
 
 export const SprintPlanning: React.FC<SprintPlanningProps> = ({
@@ -258,15 +259,45 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
   // Group sprints by quarter
   const quarterGroups = useMemo(() => {
-    return groupSprintsByQuarter(upcomingSprints);
+    // DEBUG: Check for duplicate sprints before grouping
+    const sprintIds = upcomingSprints.map(s => s.id);
+    const uniqueSprintIds = [...new Set(sprintIds)];
+    if (sprintIds.length !== uniqueSprintIds.length) {
+      console.error('🚨 DUPLICATE SPRINTS DETECTED!');
+      console.error('  - Total sprints:', sprintIds.length);
+      console.error('  - Unique sprint IDs:', uniqueSprintIds.length);
+      console.error('  - Duplicate IDs:', sprintIds.filter((id, index) => sprintIds.indexOf(id) !== index));
+      console.error('  - Full sprint list:', upcomingSprints.map(s => ({ id: s.id, name: s.name })));
+    }
+    
+    // DEDUPLICATION: Remove duplicate sprints by name (keep the first occurrence)
+    const sprintsByName = new Map();
+    const deduplicatedSprints = upcomingSprints.filter(sprint => {
+      if (sprintsByName.has(sprint.name)) {
+        console.warn(`🗑️ Removing duplicate sprint: "${sprint.name}" (ID: ${sprint.id})`);
+        return false; // Skip this duplicate
+      } else {
+        sprintsByName.set(sprint.name, sprint);
+        return true; // Keep this sprint
+      }
+    });
+    
+    if (deduplicatedSprints.length !== upcomingSprints.length) {
+      console.log(`✅ Deduplication complete: ${upcomingSprints.length} → ${deduplicatedSprints.length} sprints`);
+    }
+    
+    return groupSprintsByQuarter(deduplicatedSprints);
   }, [upcomingSprints]);
 
   // Calculate sprint data with capacity and assignments
   const sprintData = useMemo(() => {
+    // Get deduplicated sprints from quarterGroups
+    const deduplicatedSprints = quarterGroups.flatMap(qg => qg.sprints);
+    
     // CRITICAL: Don't run expensive calculations in preview mode with cleared data
     if (autoAssignPreview?.isPreviewActive) {
       console.log('🔒 PREVIEW MODE: Skipping expensive sprint calculations');
-      return upcomingSprints.map(sprint => {
+      return deduplicatedSprints.map(sprint => {
         const assignedItems = currentWorkItems.filter(item => 
           item.assignedSprints.includes(sprint.id)
         );
@@ -320,7 +351,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       });
     }
     
-    return upcomingSprints.map(sprint => {
+    return deduplicatedSprints.map(sprint => {
       // Get assigned top-level work items
       const assignedItems = currentWorkItems.filter(item => 
         item.assignedSprints.includes(sprint.id)
@@ -383,7 +414,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         availableBackendCapacity: Math.max(0, skillCapacities.backend - backendPoints)
       };
     });
-  }, [upcomingSprints, currentWorkItems, data.teamMembers, data.publicHolidays, autoAssignPreview?.timestamp]);
+  }, [quarterGroups, currentWorkItems, data.teamMembers, data.publicHolidays, autoAssignPreview?.timestamp]);
 
   // Enhanced Auto-Assign Items with 70% capacity targeting and preview
   const autoAssignItems = () => {
@@ -401,7 +432,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (epic.children) {
         const unassignedChildren = epic.children.filter(child => 
           child.assignedSprints.length === 0 && child.status !== 'Completed'
-        );
+        ).map(child => {
+          const inheritedChild = {
+            ...child,
+            // Ensure epic children inherit parent epic's priority and have proper epicId
+            epicId: epic.id,
+            parentEpicPriority: epic.priority || 'Medium',
+            // Force priority inheritance for debugging
+            _debugParentEpic: epic.title,
+            _debugParentPriority: epic.priority,
+            _debugChildOriginalPriority: child.priority
+          };
+          console.log(`🔍 Epic child inheritance: "${child.title}" from "${epic.title}" (${epic.priority}) → ${inheritedChild.parentEpicPriority}`);
+          return inheritedChild;
+        });
         allUnassignedItems.push(...unassignedChildren);
       }
     });
@@ -417,8 +461,48 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     });
 
-    // Sort items by deadline (earliest first)
+    // Priority order for sorting
+    const priorityOrder: { [key: string]: number } = {
+      'Critical': 1,
+      'High': 2,
+      'Medium': 3,
+      'Low': 4
+    };
+
+    // Debug: Show what items we have before sorting
+    console.log(`🔍 PRE-SORT DEBUG: ${allUnassignedItems.length} total items before sorting:`);
+    allUnassignedItems.forEach((item, idx) => {
+      console.log(`  [${idx}] ${item.title.substring(0, 40)} - isEpic: ${item.isEpic}, epicId: ${item.epicId}, parentEpicPriority: ${(item as any).parentEpicPriority}`);
+    });
+
+    // Sort items by epic priority first, then by deadline
     const itemsToAssign = [...allUnassignedItems].sort((a, b) => {
+      // Get epic priority for each item (either its own priority if it's an epic, or its parent epic's priority)
+      const getItemPriority = (item: WorkItem) => {
+        if (item.isEpic) {
+          return item.priority || 'Medium';
+        } else if (item.epicId) {
+          // Use directly inherited priority if available (for epic children)
+          if ((item as any).parentEpicPriority) {
+            return (item as any).parentEpicPriority;
+          }
+          // Find parent epic's priority from work items
+          const parentEpic = data.workItems.find(wi => wi.id === item.epicId && wi.isEpic);
+          return parentEpic?.priority || 'Medium';
+        }
+        return 'Medium'; // Default for non-epic items
+      };
+
+      const priorityA = getItemPriority(a);
+      const priorityB = getItemPriority(b);
+      
+      // First sort by priority
+      const priorityDiff = priorityOrder[priorityA] - priorityOrder[priorityB];
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      
+      // Then sort by deadline (earliest first)
       const dateA = a.requiredCompletionDate instanceof Date 
         ? a.requiredCompletionDate 
         : new Date(a.requiredCompletionDate);
@@ -446,15 +530,89 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     console.log(`🎯 Auto-assign starting with ${itemsToAssign.length} items to assign`);
     console.log(`📊 Available sprints: ${existingSprints.length}, starting at index: ${currentSprintIndex}`);
+    console.log(`🔍 Input to sorting - readyItems: ${readyItems.length}, epic children from ${unassignedEpicWorkItems.length} epics`);
+    console.log(`🎯 Items sorted by priority and deadline:`, itemsToAssign.map(item => {
+      const getItemPriority = (item: WorkItem) => {
+        if (item.isEpic) {
+          return item.priority || 'Medium';
+        } else if (item.epicId) {
+          // Use directly inherited priority if available (for epic children)
+          if ((item as any).parentEpicPriority) {
+            return (item as any).parentEpicPriority;
+          }
+          // Find parent epic's priority from work items
+          const parentEpic = data.workItems.find(wi => wi.id === item.epicId && wi.isEpic);
+          return parentEpic?.priority || 'Medium';
+        }
+        return 'Medium'; // Default for non-epic items
+      };
+      
+      return {
+        title: item.title.substring(0, 30),
+        priority: getItemPriority(item),
+        priorityNumber: priorityOrder[getItemPriority(item)],
+        deadline: item.requiredCompletionDate,
+        isEpic: item.isEpic,
+        epicId: item.epicId,
+        hasParentEpic: !!item.epicId,
+        parentEpicFound: item.epicId ? !!data.workItems.find(wi => wi.id === item.epicId && wi.isEpic) : false,
+        hasInheritedPriority: !!(item as any).parentEpicPriority,
+        inheritedPriority: (item as any).parentEpicPriority,
+        prioritySource: item.isEpic ? 'self' : ((item as any).parentEpicPriority ? 'inherited' : (item.epicId ? 'lookup' : 'default'))
+      };
+    }));
     
     itemsToAssign.forEach((item, idx) => {
+      const itemPriority = item.isEpic ? (item.priority || 'Medium') : 
+                          (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
+      
       console.log(`\n🚀 [${idx + 1}/${itemsToAssign.length}] Processing: ${item.title.substring(0, 40)}...`);
-      console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}]`);
+      console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
       
       let assigned = false;
       
-      // Try to assign to existing sprints first (aiming for 70% capacity)
-      for (let i = currentSprintIndex; i < existingSprints.length && !assigned; i++) {
+      // For higher priority items (Critical, High), allow more aggressive filling of earlier sprints
+      // For lower priority items (Medium, Low), be more conservative and prefer later sprints
+      const priorityBonus = priorityOrder[itemPriority] <= 2 ? 0.1 : 0; // Critical/High get 10% bonus capacity
+      const targetUtilization = priorityOrder[itemPriority] <= 2 ? 0.8 : 0.7; // Critical/High can fill to 80%
+      
+      console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
+      
+      // Priority-aware sprint assignment: ensure higher priority items get earlier sprint access
+      const getPriorityAwareStartSprint = () => {
+        const itemPriorityNum = priorityOrder[itemPriority];
+        
+        // For Critical/High priority: can access any sprint
+        if (itemPriorityNum <= 2) return currentSprintIndex;
+        
+        // For Medium/Low priority: find first sprint without higher priority items
+        for (let sprintIdx = currentSprintIndex; sprintIdx < existingSprints.length; sprintIdx++) {
+          const sprintData = existingSprints[sprintIdx];
+          const sprint = sprintData.sprint;
+          
+          // Check if sprint has any work items and if any have higher priority
+          const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 && 
+            sprint.workItems.some(workItem => {
+              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') : 
+                                     (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
+              return priorityOrder[workItemPriority] < itemPriorityNum;
+            });
+          
+          if (!hasHigherPriorityItems) {
+            if (sprintIdx > currentSprintIndex) {
+              console.log(`   🚫 Priority blocking: ${itemPriority} item redirected from sprint ${currentSprintIndex + 1} to sprint ${sprintIdx + 1}`);
+            }
+            return sprintIdx;
+          }
+        }
+        
+        return currentSprintIndex; // Fallback
+      };
+      
+      const startSprintIndex = getPriorityAwareStartSprint();
+      
+      // Try to assign to existing sprints first (aiming for priority-based capacity)
+      for (let i = startSprintIndex; i < existingSprints.length && !assigned; i++) {
         const sprintData = existingSprints[i];
         const sprint = sprintData.sprint;
         
@@ -495,24 +653,24 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedBackend: currentUtilization.assignedBackend
         });
         
-        // Check if adding this item would exceed 70% in any skill
+        // Check if adding this item would exceed priority-based capacity in any skill
         const skillCapacityCheck = item.requiredSkills.every(skill => {
           if (skill === 'frontend') {
             const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-            console.log(`   🎨 Frontend check: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: 70%)`);
-            return newFrontendUtil <= 0.7;
+            console.log(`   🎨 Frontend check: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            return newFrontendUtil <= targetUtilization;
           } else if (skill === 'backend') {
             const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-            console.log(`   ⚙️ Backend check: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: 70%)`);
-            return newBackendUtil <= 0.7;
+            console.log(`   ⚙️ Backend check: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            return newBackendUtil <= targetUtilization;
           }
           return true;
         });
         
         const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
-        console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: 70%)`);
+        console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: ${targetUtilization * 100}%)`);
         
-        if (skillCapacityCheck && newTotalUtil <= 0.7) {
+        if (skillCapacityCheck && newTotalUtil <= targetUtilization) {
           console.log(`   ✅ ASSIGNED to ${sprint.name}!`);
           
           // Assign item to this sprint
@@ -549,7 +707,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             lastAssignedSprintEndDate = sprint.endDate;
           }
         } else {
-          console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > 0.7}`);
+          console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > targetUtilization}`);
         }
       }
       
@@ -564,8 +722,25 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     });
 
-    // Calculate possible end date
-    const possibleEndDate = lastAssignedSprintEndDate || new Date();
+    // Calculate possible end date based on the last sprint with assigned work items
+    let possibleEndDate: Date | null = null;
+    
+    // Find the last sprint that has any assigned work items after auto-assignment
+    for (let i = updatedSprints.length - 1; i >= 0; i--) {
+      const sprint = updatedSprints[i];
+      const hasAssignedItems = sprint.workItems && sprint.workItems.length > 0;
+      if (hasAssignedItems) {
+        possibleEndDate = sprint.endDate;
+        console.log(`📅 Projected finish date based on last sprint with assignments: ${sprint.name} (${format(sprint.endDate, 'MMM dd, yyyy')})`);
+        break;
+      }
+    }
+    
+    // Fallback to today if no sprints have assignments
+    if (!possibleEndDate) {
+      possibleEndDate = new Date();
+      console.log(`📅 No assignments found - projected finish date defaults to today`);
+    }
 
     // Set preview state instead of immediately saving
     setAutoAssignPreview({
@@ -633,7 +808,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       
       // Update local state after successful database saves
       onUpdateWorkItems(autoAssignPreview.workItems);
-      onUpdateSprints(autoAssignPreview.sprints);
+      
+      // Check if this is a Clear All operation (all sprints have empty workItems)
+      const isClearAllOperation = autoAssignPreview.sprints.every(sprint => sprint.workItems.length === 0);
+      
+      if (isClearAllOperation) {
+        console.log('🗑️ Clear All operation detected - updating sprints without backend sync');
+        // Skip backend sync for Clear All to maintain cleared state
+        onUpdateSprints(autoAssignPreview.sprints, false, false, true);
+      } else {
+        // For regular auto-assign operations, use normal sync
+        onUpdateSprints(autoAssignPreview.sprints);
+      }
       
       // Clear preview
       setAutoAssignPreview(null);
@@ -787,50 +973,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         return;
       }
       
-                  // Determine work item skill based on title and description content (per workspace rules)
-            let updatedWorkItem = { ...workItem };
-            const title = workItem.title?.toLowerCase() || '';
-            const description = workItem.description?.toLowerCase() || '';
-            
-            // Check for explicit skill indicators in title (more reliable)
-            const titleHasBackend = title.includes('be:') || title.includes('backend');
-            const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
-            
-            // Check if title or description contains BE or FE indicators
-            const hasBackendIndicator = title.includes('be') || description.includes('be');
-            const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
-            
-            // Apply automatic skill determination - prioritize title over description
-            if (titleHasFrontend && !titleHasBackend) {
-              // Title explicitly indicates frontend
-              console.log(`🎯 Auto-detected Frontend skill from title: "${workItem.title}"`);
-              updatedWorkItem = {
-                ...updatedWorkItem,
-                requiredSkills: ['frontend']
-              };
-            } else if (titleHasBackend && !titleHasFrontend) {
-              // Title explicitly indicates backend
-              console.log(`🎯 Auto-detected Backend skill from title: "${workItem.title}"`);
-              updatedWorkItem = {
-                ...updatedWorkItem,
-                requiredSkills: ['backend']
-              };
-            } else if (hasBackendIndicator && !hasFrontendIndicator) {
-              // Fall back to description analysis - backend only
-              console.log(`🎯 Auto-detected Backend skill from description: "${workItem.title}" / "${workItem.description}"`);
-              updatedWorkItem = {
-                ...updatedWorkItem,
-                requiredSkills: ['backend']
-              };
-            } else if (hasFrontendIndicator && !hasBackendIndicator) {
-              // Fall back to description analysis - frontend only
-              console.log(`🎯 Auto-detected Frontend skill from description: "${workItem.title}" / "${workItem.description}"`);
-              updatedWorkItem = {
-                ...updatedWorkItem,
-                requiredSkills: ['frontend']
-              };
-            } else if (!titleHasFrontend && !titleHasBackend && !hasBackendIndicator && !hasFrontendIndicator && updatedWorkItem.requiredSkills.length > 1) {
-        // No BE/FE indicators in title or description and currently has both skills → Ask user
+      // Determine work item skill using enhanced detection
+      let updatedWorkItem = { ...workItem };
+      
+      // Use enhanced skill detection
+      const detectedSkills = detectSkillsFromContent(workItem);
+      
+      // If we get a single skill back and it's different from current skills, apply it
+      if (detectedSkills.length === 1 && !workItem.requiredSkills.includes(detectedSkills[0])) {
+        updatedWorkItem = {
+          ...updatedWorkItem,
+          requiredSkills: detectedSkills
+        };
+      } else if (updatedWorkItem.requiredSkills.length > 1) {
+        // Multiple skills detected and no clear auto-determination → Ask user
         const userChoice = prompt(
           `Cannot auto-determine skill for "${workItem.title}".\n\n` +
           `Title: "${workItem.title}"\n` +
@@ -857,7 +1013,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           alert(`Invalid selection. Keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
         }
       }
-      // If both BE and FE indicators are present, or already has single skill, keep existing skills
     
     const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
     
@@ -1095,6 +1250,63 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     if (utilization > 90) return 'bg-orange-500';
     if (utilization < 70) return 'bg-yellow-500';
     return 'bg-green-500';
+  };
+
+  // Priority styling helper
+  const getPriorityStyles = (priority: string) => {
+    switch (priority) {
+      case 'Critical':
+        return 'bg-red-100 text-red-800 border border-red-300';
+      case 'High':
+        return 'bg-orange-100 text-orange-800 border border-orange-300';
+      case 'Medium':
+        return 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+      case 'Low':
+        return 'bg-green-100 text-green-800 border border-green-300';
+      default:
+        return 'bg-gray-100 text-gray-800 border border-gray-300';
+    }
+  };
+
+  // Update epic priority function
+  const updateEpicPriority = async (epicId: string, priority: 'Critical' | 'High' | 'Medium' | 'Low') => {
+    try {
+      console.log(`🎯 Updating epic priority: ${epicId} -> ${priority}`);
+      
+      // Use the consistent API service
+      await workItemsApi.update(epicId, { priority });
+
+      // Update local state - both the epic and its children's inherited priority
+      const updatedWorkItems = data.workItems.map(item => {
+        if (item.id === epicId) {
+          // Update the epic itself
+          console.log(`📝 Updating epic ${item.title} priority: ${item.priority} -> ${priority}`);
+          return { ...item, priority };
+        } else if (item.epicId === epicId) {
+          // Update epic children to inherit new priority
+          console.log(`👶 Updating epic child ${item.title} inherited priority: ${(item as any).parentEpicPriority} -> ${priority}`);
+          return { ...item, parentEpicPriority: priority };
+        } else if (item.isEpic && item.children) {
+          // Update children within epic work items
+          const updatedChildren = item.children.map(child => {
+            if (child.epicId === epicId || item.id === epicId) {
+              console.log(`👶 Updating nested child ${child.title} inherited priority: ${(child as any).parentEpicPriority} -> ${priority}`);
+              return { ...child, parentEpicPriority: priority };
+            }
+            return child;
+          });
+          return item.id === epicId ? { ...item, priority, children: updatedChildren } : { ...item, children: updatedChildren };
+        }
+        return item;
+      });
+      
+      onUpdateWorkItems(updatedWorkItems);
+      
+      console.log(`✅ Epic priority updated successfully - epic and all children updated`);
+    } catch (error) {
+      console.error('❌ Failed to update epic priority:', error);
+      alert(`Failed to update epic priority: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   return (
@@ -1428,9 +1640,28 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           <div className="flex-1">
                             <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
                               📋 {epic.jiraId ? `${epic.jiraId} - ${epic.title}` : epic.title}
+                              {/* Priority Badge */}
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPriorityStyles(epic.priority || 'Medium')}`}>
+                                {epic.priority || 'Medium'}
+                              </span>
                             </div>
-                            <div className="text-xs text-indigo-600">
-                              Epic • {epic.children?.length || 0} children • {epic.jiraId}
+                            <div className="text-xs text-indigo-600 flex items-center justify-between">
+                              <span>Epic • {epic.children?.length || 0} children • {epic.jiraId}</span>
+                              {/* Priority Dropdown */}
+                              <select
+                                value={epic.priority || 'Medium'}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  updateEpicPriority(epic.id, e.target.value as 'Critical' | 'High' | 'Medium' | 'Low');
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-xs border border-indigo-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              >
+                                <option value="Critical">Critical</option>
+                                <option value="High">High</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Low">Low</option>
+                              </select>
                             </div>
                           </div>
                         </div>
@@ -1460,31 +1691,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             </div>
                             
                             {epic.children?.map((child, index) => {
-                              // Apply skill detection for epic children
-                              const title = child.title?.toLowerCase() || '';
-                              const description = child.description?.toLowerCase() || '';
-                              const hasBackendIndicator = title.includes('be') || description.includes('be');
-                              const hasFrontendIndicator = title.includes('fe') || description.includes('fe');
-                              
-                              let detectedSkills = child.requiredSkills;
-                              
-                              // Check for explicit skill indicators in title (more reliable)
-                              const titleHasBackend = title.includes('be:') || title.includes('backend');
-                              const titleHasFrontend = title.includes('fe:') || title.includes('frontend');
-                              
-                              if (titleHasFrontend && !titleHasBackend) {
-                                // Title explicitly indicates frontend
-                                detectedSkills = ['frontend'];
-                              } else if (titleHasBackend && !titleHasFrontend) {
-                                // Title explicitly indicates backend
-                                detectedSkills = ['backend'];
-                              } else if (hasBackendIndicator && !hasFrontendIndicator) {
-                                // Fall back to description analysis
-                                detectedSkills = ['backend'];
-                              } else if (hasFrontendIndicator && !hasBackendIndicator) {
-                                // Fall back to description analysis
-                                detectedSkills = ['frontend'];
-                              }
+                              // Apply enhanced skill detection for epic children
+                              const detectedSkills = detectSkillsFromContent(child);
                               
                               const isCompleted = child.status === 'Completed';
                               const isAssigned = child.assignedSprints.length > 0;
@@ -1818,9 +2026,24 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         ) : (
                           assignedItems.map(item => (
                             <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
-                              <div>
-                                <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
-                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                              <div className="flex items-center gap-2">
+                                <div>
+                                  <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
+                                  <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                </div>
+                                {/* Show priority for epic items or epic children */}
+                                {(item.isEpic || item.epicId) && (
+                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
+                                    item.isEpic 
+                                      ? (item.priority || 'Medium')
+                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                  )}`}>
+                                    {item.isEpic 
+                                      ? (item.priority || 'Medium')
+                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                    }
+                                  </span>
+                                )}
                               </div>
                               <button
                                 onClick={(e) => {

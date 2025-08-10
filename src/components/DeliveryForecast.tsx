@@ -3,6 +3,7 @@ import { ResourcePlanningData, WorkItem, Sprint } from '../types';
 import { Calendar, Clock, Target, AlertTriangle, TrendingUp, Users } from 'lucide-react';
 import { format, addDays, differenceInDays, isAfter } from 'date-fns';
 import { calculateSprintCapacity } from '../utils/dateUtils';
+import { analyzeDescriptionForSkills } from '../utils/skillDetection';
 
 interface DeliveryForecastProps {
   data: ResourcePlanningData;
@@ -60,16 +61,32 @@ export const DeliveryForecast: React.FC<DeliveryForecastProps> = ({
       } else if (item.requiredSkills.includes('backend')) {
         backendPoints += item.estimateStoryPoints;
       } else {
-        // Auto-detect based on description if no skills specified
-        const description = item.description?.toLowerCase() || '';
-        if (description.includes('fe') || description.includes('frontend') || description.includes('ui')) {
+        // Use enhanced skill analysis for items with no skills specified
+        const analysis = analyzeDescriptionForSkills(item.title || '', item.description || '');
+        
+        if (analysis.confidence === 'high' && analysis.detectedSkill === 'frontend') {
           frontendPoints += item.estimateStoryPoints;
-        } else if (description.includes('be') || description.includes('backend') || description.includes('api')) {
+        } else if (analysis.confidence === 'high' && analysis.detectedSkill === 'backend') {
+          backendPoints += item.estimateStoryPoints;
+        } else if (analysis.confidence === 'medium' && analysis.detectedSkill === 'frontend') {
+          frontendPoints += item.estimateStoryPoints;
+        } else if (analysis.confidence === 'medium' && analysis.detectedSkill === 'backend') {
           backendPoints += item.estimateStoryPoints;
         } else {
-          // Default split if unclear
-          frontendPoints += item.estimateStoryPoints / 2;
-          backendPoints += item.estimateStoryPoints / 2;
+          // Fallback to simple keyword detection
+          const description = item.description?.toLowerCase() || '';
+          const title = item.title?.toLowerCase() || '';
+          const text = `${title} ${description}`;
+          
+          if (text.includes('fe') || text.includes('frontend') || text.includes('ui')) {
+            frontendPoints += item.estimateStoryPoints;
+          } else if (text.includes('be') || text.includes('backend') || text.includes('api')) {
+            backendPoints += item.estimateStoryPoints;
+          } else {
+            // Default split if unclear
+            frontendPoints += item.estimateStoryPoints / 2;
+            backendPoints += item.estimateStoryPoints / 2;
+          }
         }
       }
     });

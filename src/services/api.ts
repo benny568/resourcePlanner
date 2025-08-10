@@ -219,7 +219,7 @@ export const transformers = {
       requiredCompletionDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
     }
 
-    const apiData = {
+        const apiData = {
       title,
       description: item.description || '',
       estimateStoryPoints,
@@ -227,13 +227,14 @@ export const transformers = {
       requiredSkills,
       dependencies: item.dependencies || [],
       status: item.status || 'Not Started',
-    jiraId: item.jiraId,
-    jiraStatus: item.jiraStatus,
+      jiraId: item.jiraId,
+      jiraStatus: item.jiraStatus,
       assignedSprints: item.assignedSprints || [],
-    epicId: item.epicId,
-    // Epic work item specific properties
+      epicId: item.epicId,
+      // Epic work item specific properties
       isEpic: item.isEpic || false,
-    children: item.children
+      priority: item.priority || 'Medium',
+      children: item.children
     };
 
     // Log validation fixes for debugging
@@ -256,7 +257,8 @@ export const transformers = {
     requiredCompletionDate: new Date(item.requiredCompletionDate),
     // Ensure epic properties are preserved
     children: item.children || undefined,
-    isEpic: item.isEpic || false
+    isEpic: item.isEpic || false,
+    priority: item.priority || 'Medium'
   }),
   
   // Convert frontend sprint to backend format
@@ -293,11 +295,13 @@ export const transformers = {
     firstSprintStartDate: config.firstSprintStartDate.toISOString(),
     sprintDurationDays: config.sprintDurationDays,
     defaultVelocity: config.defaultVelocity,
+    startingQuarterSprintNumber: config.startingQuarterSprintNumber || 1,
   }),
   
   // Convert backend sprint config to frontend format
   sprintConfigFromApi: (config: any) => ({
     ...config,
     firstSprintStartDate: new Date(config.firstSprintStartDate),
+    startingQuarterSprintNumber: config.startingQuarterSprintNumber || 1,
   }),
 }; 
