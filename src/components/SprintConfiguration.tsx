@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { SprintConfig, Sprint } from '../types';
 import { Settings, Calendar, Zap, Loader } from 'lucide-react';
 import { format } from 'date-fns';
@@ -26,6 +26,26 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState('');
+
+  // Deduplicate sprints to prevent display issues (same logic as SprintPlanning)
+  const deduplicatedSprints = useMemo(() => {
+    const sprintsByName = new Map();
+    const deduplicated = sprints.filter(sprint => {
+      if (sprintsByName.has(sprint.name)) {
+        console.warn(`🗑️ SprintConfig: Removing duplicate sprint: "${sprint.name}" (ID: ${sprint.id})`);
+        return false; // Skip this duplicate
+      } else {
+        sprintsByName.set(sprint.name, sprint);
+        return true; // Keep this sprint
+      }
+    });
+    
+    if (deduplicated.length !== sprints.length) {
+      console.log(`✅ SprintConfig deduplication: ${sprints.length} → ${deduplicated.length} sprints`);
+    }
+    
+    return deduplicated;
+  }, [sprints]);
 
   const handleConfigUpdate = async () => {
     // Prevent multiple simultaneous updates
@@ -70,6 +90,7 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   };
 
   const updateSprintVelocity = async (sprintId: string, velocity: number) => {
+    // Use the original sprints array for updates to maintain all data, but only update the specific sprint
     const updatedSprints = sprints.map(sprint =>
       sprint.id === sprintId ? { ...sprint, plannedVelocity: velocity } : sprint
     );
@@ -190,7 +211,7 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
             <div>• Default Velocity: {sprintConfig.defaultVelocity} story points per sprint</div>
             <div>• Starting Quarter Sprint Number: {sprintConfig.startingQuarterSprintNumber || 1}</div>
             <div>• First Sprint Starts: {format(sprintConfig.firstSprintStartDate, 'MMM dd, yyyy')}</div>
-            <div>• Generated Sprints: {sprints.length}</div>
+            <div>• Generated Sprints: {deduplicatedSprints.length}</div>
           </div>
         </div>
       </div>
@@ -211,12 +232,12 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
         </div>
 
         <div className="space-y-3 max-h-96 overflow-y-auto">
-          {sprints.length === 0 ? (
+          {deduplicatedSprints.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               No sprints generated. Update configuration above to generate sprints.
             </div>
           ) : (
-            sprints.map((sprint) => (
+            deduplicatedSprints.map((sprint) => (
               <div key={sprint.id} className="border rounded-lg p-4">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
@@ -248,32 +269,32 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
           )}
         </div>
 
-        {sprints.length > 0 && (
+        {deduplicatedSprints.length > 0 && (
           <div className="mt-4 p-4 bg-gray-50 rounded-lg">
             <h3 className="font-semibold mb-2">Sprint Summary</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="font-medium">Total Sprints:</span>
-                <div className="text-lg font-bold text-blue-600">{sprints.length}</div>
+                <div className="text-lg font-bold text-blue-600">{deduplicatedSprints.length}</div>
               </div>
               <div>
                 <span className="font-medium">Average Velocity:</span>
                 <div className="text-lg font-bold text-blue-600">
-                  {sprints.length > 0 
-                    ? Math.round(sprints.reduce((sum, s) => sum + s.plannedVelocity, 0) / sprints.length)
+                  {deduplicatedSprints.length > 0 
+                    ? Math.round(deduplicatedSprints.reduce((sum, s) => sum + s.plannedVelocity, 0) / deduplicatedSprints.length)
                     : 0}
                 </div>
               </div>
               <div>
                 <span className="font-medium">Total Capacity:</span>
                 <div className="text-lg font-bold text-blue-600">
-                  {sprints.reduce((sum, s) => sum + s.plannedVelocity, 0)}
+                  {deduplicatedSprints.reduce((sum, s) => sum + s.plannedVelocity, 0)}
                 </div>
               </div>
               <div>
                 <span className="font-medium">First Sprint:</span>
                 <div className="text-sm font-medium text-blue-600">
-                  {sprints.length > 0 ? format(sprints[0].startDate, 'MMM dd') : 'N/A'}
+                  {deduplicatedSprints.length > 0 ? format(deduplicatedSprints[0].startDate, 'MMM dd') : 'N/A'}
                 </div>
               </div>
             </div>

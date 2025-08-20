@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
@@ -978,22 +978,29 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       
       // Use enhanced skill detection
       const detectedSkills = detectSkillsFromContent(workItem);
+      console.log(`🔍 DEBUG: Work item "${workItem.title}" skill detection result:`, {
+        currentSkills: workItem.requiredSkills,
+        detectedSkills: detectedSkills,
+        detectedLength: detectedSkills.length
+      });
       
-      // If we get a single skill back and it's different from current skills, apply it
-      if (detectedSkills.length === 1 && !workItem.requiredSkills.includes(detectedSkills[0])) {
+      // If we get a single skill back, apply it (regardless of current skills)
+      if (detectedSkills.length === 1) {
+        console.log(`🎯 Auto-detected skill: ${detectedSkills[0]} for "${workItem.title}"`);
         updatedWorkItem = {
           ...updatedWorkItem,
           requiredSkills: detectedSkills
         };
-      } else if (updatedWorkItem.requiredSkills.length > 1) {
-        // Multiple skills detected and no clear auto-determination → Ask user
-        const userChoice = prompt(
-          `Cannot auto-determine skill for "${workItem.title}".\n\n` +
-          `Title: "${workItem.title}"\n` +
-          `Description: "${workItem.description}"\n\n` +
-          `Please specify the required skill:\n` +
-          `Type "FE" for Frontend or "BE" for Backend:`
-        );
+      } else if (detectedSkills.length === 0 || (detectedSkills.includes('frontend') && detectedSkills.includes('backend'))) {
+        // No clear detection or both skills detected → Ask user only if item has multiple skills
+        if (updatedWorkItem.requiredSkills.length > 1) {
+          const userChoice = prompt(
+            `Cannot auto-determine skill for "${workItem.title}".\n\n` +
+            `Title: "${workItem.title}"\n` +
+            `Description: "${workItem.description}"\n\n` +
+            `Please specify the required skill:\n` +
+            `Type "FE" for Frontend or "BE" for Backend:`
+          );
         
         if (userChoice?.toLowerCase() === 'fe' || userChoice?.toLowerCase() === 'frontend') {
           console.log(`👤 User selected Frontend skill for: "${workItem.title}"`);
@@ -1011,6 +1018,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           // User cancelled or provided invalid input
           console.log(`❌ Invalid skill selection, keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
           alert(`Invalid selection. Keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
+        }
         }
       }
     
@@ -1062,15 +1070,31 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             console.log('✅ Work item skills updated in database');
           }
           
-        console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
-        await workItemsApi.assignToSprint(itemId, sprintId);
-        console.log('✅ Sprint assignment saved to database');
-      } catch (error) {
+          // Check if already assigned to this sprint
+          if (workItem.sprintId === sprintId) {
+            console.log(`ℹ️ Work item "${workItem.title}" is already assigned to sprint ${targetSprint.name}`);
+            alert(`ℹ️ "${workItem.title}" is already assigned to sprint "${targetSprint.name}"`);
+            return;
+          }
+          
+          console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
+          await workItemsApi.assignToSprint(itemId, sprintId);
+          console.log('✅ Sprint assignment saved to database');
+        } catch (error: any) {
           console.error('❌ Failed to save to database:', error);
-          alert('❌ Failed to save assignment. Please try again.');
-        return;
-      }
-    } else {
+          
+          // Show specific error message if available
+          let errorMessage = 'Failed to save assignment. Please try again.';
+          if (error?.response?.data?.error) {
+            errorMessage = error.response.data.error;
+          } else if (error?.message) {
+            errorMessage = error.message;
+          }
+          
+          alert(`❌ ${errorMessage}`);
+          return;
+        }
+      } else {
         // This is an imported epic child that hasn't been converted to a work item yet
         const message = `Cannot assign "${workItem.title}" to sprint. This item needs to be converted to a work item first.`;
         console.log(`❌ ${message}`);
@@ -1639,7 +1663,21 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           )}
                           <div className="flex-1">
                             <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
-                              📋 {epic.jiraId ? `${epic.jiraId} - ${epic.title}` : epic.title}
+                              📋 {epic.jiraId ? (
+                                <>
+                                  <a 
+                                    href={`https://cvs-hcd.atlassian.net/browse/${epic.jiraId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {epic.jiraId}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                  <span className="ml-1">- {epic.title}</span>
+                                </>
+                              ) : epic.title}
                               {/* Priority Badge */}
                               <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPriorityStyles(epic.priority || 'Medium')}`}>
                                 {epic.priority || 'Medium'}
@@ -1763,7 +1801,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   }}
                                 >
                                   <div style={{ fontWeight: '500', marginBottom: '6px' }}>
-                                    {child.jiraId ? `${child.jiraId} - ${child.title}` : child.title}
+                                    {child.jiraId ? (
+                                      <>
+                                        <a 
+                                          href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{ textDecoration: 'none' }}
+                                        >
+                                          {child.jiraId}
+                                          <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                        <span style={{ marginLeft: '4px' }}>- {child.title}</span>
+                                      </>
+                                    ) : child.title}
                                   </div>
                                   <div style={{ 
                                     display: 'flex', 
@@ -2028,7 +2081,23 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
                               <div className="flex items-center gap-2">
                                 <div>
-                                  <span className="font-medium">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</span>
+                                  {item.jiraId ? (
+                                    <span className="font-medium">
+                                      <a 
+                                        href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {item.jiraId}
+                                        <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                      <span className="ml-1">- {item.title}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="font-medium">{item.title}</span>
+                                  )}
                                   <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
                                 </div>
                                 {/* Show priority for epic items or epic children */}
