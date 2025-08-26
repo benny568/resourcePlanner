@@ -190,3 +190,4 @@ export function detectSkillsFromContent(workItem: { title?: string; description?
   console.log(`⚠️ No clear skill indicators found for: "${workItem.title}" - keeping existing skills`);
   return workItem.requiredSkills || ['frontend', 'backend'];
 }
+

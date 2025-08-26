@@ -27,6 +27,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState<{x: number, y: number, itemId: string} | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+  // Initialize all sprints as expanded by default
+  const [expandedSprints, setExpandedSprints] = useState<Set<string>>(() => {
+    const initialExpanded = new Set<string>();
+    // Expand first few sprints by default
+    data.sprints.slice(0, 5).forEach(sprint => {
+      initialExpanded.add(sprint.id);
+    });
+    return initialExpanded;
+  });
   const [hideDropZones, setHideDropZones] = useState(false);
   
   // Auto-assign preview state
@@ -178,6 +187,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log(`📋 EXPANDED EPICS:`, Array.from(newExpanded));
   };
 
+  // Toggle sprint expansion
+  const toggleSprintExpansion = (sprintId: string) => {
+    const newExpanded = new Set(expandedSprints);
+    if (newExpanded.has(sprintId)) {
+      newExpanded.delete(sprintId);
+      console.log(`🔽 COLLAPSING SPRINT: ${sprintId}`);
+    } else {
+      newExpanded.add(sprintId);
+      console.log(`🔼 EXPANDING SPRINT: ${sprintId}`);
+    }
+    setExpandedSprints(newExpanded);
+    console.log(`📅 EXPANDED SPRINTS:`, Array.from(newExpanded));
+  };
+
   // Use preview data if available, otherwise use actual data
   // CRITICAL: Once preview is active, NEVER switch back to data.* until preview is cleared
   const currentWorkItems = autoAssignPreview?.isPreviewActive ? autoAssignPreview.workItems : data.workItems;
@@ -252,27 +275,27 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     }
   }, [readyItems, unassignedEpicWorkItems]);
 
-  // Get upcoming sprints (not in the past)
-  const upcomingSprints = currentSprints.filter(sprint => 
-    !isBefore(sprint.endDate, new Date())
+  // Get active sprints (not completed by user)
+  const activeSprints = currentSprints.filter(sprint => 
+    sprint.status !== 'completed'
   ).slice(0, 12); // Show next 12 sprints to better showcase quarterly grouping
 
   // Group sprints by quarter
   const quarterGroups = useMemo(() => {
     // DEBUG: Check for duplicate sprints before grouping
-    const sprintIds = upcomingSprints.map(s => s.id);
+    const sprintIds = activeSprints.map(s => s.id);
     const uniqueSprintIds = [...new Set(sprintIds)];
     if (sprintIds.length !== uniqueSprintIds.length) {
       console.error('🚨 DUPLICATE SPRINTS DETECTED!');
       console.error('  - Total sprints:', sprintIds.length);
       console.error('  - Unique sprint IDs:', uniqueSprintIds.length);
       console.error('  - Duplicate IDs:', sprintIds.filter((id, index) => sprintIds.indexOf(id) !== index));
-      console.error('  - Full sprint list:', upcomingSprints.map(s => ({ id: s.id, name: s.name })));
+      console.error('  - Full sprint list:', activeSprints.map(s => ({ id: s.id, name: s.name })));
     }
     
     // DEDUPLICATION: Remove duplicate sprints by name (keep the first occurrence)
     const sprintsByName = new Map();
-    const deduplicatedSprints = upcomingSprints.filter(sprint => {
+    const deduplicatedSprints = activeSprints.filter(sprint => {
       if (sprintsByName.has(sprint.name)) {
         console.warn(`🗑️ Removing duplicate sprint: "${sprint.name}" (ID: ${sprint.id})`);
         return false; // Skip this duplicate
@@ -282,12 +305,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     });
     
-    if (deduplicatedSprints.length !== upcomingSprints.length) {
-      console.log(`✅ Deduplication complete: ${upcomingSprints.length} → ${deduplicatedSprints.length} sprints`);
+    if (deduplicatedSprints.length !== activeSprints.length) {
+      console.log(`✅ Deduplication complete: ${activeSprints.length} → ${deduplicatedSprints.length} sprints`);
     }
     
     return groupSprintsByQuarter(deduplicatedSprints);
-  }, [upcomingSprints]);
+  }, [activeSprints]);
 
   // Calculate sprint data with capacity and assignments
   const sprintData = useMemo(() => {
@@ -1228,6 +1251,37 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     }
   };
 
+  // Complete a sprint (mark as completed, remove from planning view)
+  const completeSprint = async (sprintId: string) => {
+    try {
+      const sprint = data.sprints.find(s => s.id === sprintId);
+      if (!sprint) {
+        alert('Sprint not found');
+        return;
+      }
+
+      // Confirm with user before completing
+      const confirmMessage = `Are you sure you want to mark "${sprint.name}" as completed?\n\nThis will remove it from the sprint planning view.`;
+      
+      if (!confirm(confirmMessage)) {
+        return;
+      }
+
+      console.log(`✅ Marking sprint as completed: ${sprintId} ("${sprint.name}")`);
+      
+      // Mark sprint as completed
+      const updatedSprints = data.sprints.map(s => 
+        s.id === sprintId ? { ...s, status: 'completed' as const } : s
+      );
+      await onUpdateSprints(updatedSprints);
+      
+      console.log(`✅ Sprint "${sprint.name}" marked as completed`);
+    } catch (error) {
+      console.error('❌ Error completing sprint:', error);
+      alert('Failed to complete sprint. Please try again.');
+    }
+  };
+
   // Archive a completed sprint
   const archiveSprint = async (sprintId: string) => {
     try {
@@ -1844,7 +1898,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                           </span>
                                         ))}
                                       </div>
-                                      {isCompleted && <span style={{ color: '#059669', fontWeight: '500' }}>✓ DONE</span>}
+                                      {/* Always show Jira status */}
+                                      <span style={{ 
+                                        color: isCompleted ? '#059669' : '#6b7280', 
+                                        fontWeight: '500' 
+                                      }}>
+                                        {isCompleted ? '✓ ' : ''}{child.jiraStatus || child.status}
+                                      </span>
                                       {isAssigned && !isCompleted && <span style={{ color: '#2563eb', fontWeight: '500' }}>📅 ASSIGNED</span>}
                                     </div>
                                     <span style={{ 
@@ -1986,19 +2046,36 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         </div>
                       )}
 
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-semibold">{sprint.name}</h4>
-                            {isBefore(sprint.endDate, new Date()) && (
-                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
-                                Completed
-                              </span>
-                            )}
+                      <div 
+                        className="flex justify-between items-start mb-3 cursor-pointer hover:bg-gray-50 -mx-2 px-2 py-1 rounded transition-colors"
+                        onClick={(e) => {
+                          // Only toggle if not dragging and not clicking on buttons
+                          if (!draggedItem && !e.defaultPrevented) {
+                            e.stopPropagation();
+                            toggleSprintExpansion(sprint.id);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-2 flex-1">
+                          {/* Expand/Collapse Icon */}
+                          {expandedSprints.has(sprint.id) ? (
+                            <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                          )}
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-semibold">{sprint.name}</h4>
+                              {sprint.status === 'completed' && (
+                                <span className="px-2 py-1 bg-green-100 text-green-600 text-xs rounded-full">
+                                  Completed
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-600">
+                              {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
+                            </p>
                           </div>
-                          <p className="text-sm text-gray-600">
-                            {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
-                          </p>
                         </div>
                         <div className="flex items-start gap-3">
                           <div className="text-right">
@@ -2009,24 +2086,27 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               {assignedPoints} / {capacity.toFixed(1)} pts
                             </div>
                           </div>
-                          {/* Archive button for completed sprints */}
-                          {isBefore(sprint.endDate, new Date()) && (
+                          {/* Complete Sprint button for active sprints */}
+                          {(!sprint.status || sprint.status !== 'completed') && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                archiveSprint(sprint.id);
+                                completeSprint(sprint.id);
                               }}
-                              className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                              title={`Archive sprint "${sprint.name}"`}
+                              className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-md transition-colors"
+                              title={`Mark sprint "${sprint.name}" as completed`}
                             >
-                              <Archive className="h-4 w-4" />
+                              <CheckCircle className="h-4 w-4" />
                             </button>
                           )}
                         </div>
                       </div>
 
-                      {/* Skill-specific capacity */}
-                      <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
+                      {/* Collapsible sprint content */}
+                      {expandedSprints.has(sprint.id) && (
+                        <div className="space-y-3 transition-all duration-200">
+                          {/* Skill-specific capacity */}
+                          <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
                         <div className="bg-purple-50 p-2 rounded">
                           <div className="font-medium text-purple-800">Frontend</div>
                           <div className={`${getUtilizationColor(frontendUtilization)}`}>
@@ -2099,6 +2179,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                     <span className="font-medium">{item.title}</span>
                                   )}
                                   <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                  {/* Always show current Jira status */}
+                                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                                    item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                  </span>
                                 </div>
                                 {/* Show priority for epic items or epic children */}
                                 {(item.isEpic || item.epicId) && (
@@ -2153,6 +2241,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 rounded flex items-center gap-2 text-sm">
                           <AlertTriangle className="h-4 w-4" />
                           Sprint has available capacity. Consider adding more items.
+                        </div>
+                      )}
                         </div>
                       )}
                     </div>

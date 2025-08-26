@@ -203,18 +203,30 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
       const freshEpicData = await response.json();
       console.log(`📝 Fresh epic data: ${freshEpicData.children.length} children from Jira`);
 
-      // Get existing children from database
-      const existingChildren = workItems.filter(item => item.epicId === epicWorkItem.id);
+      // Get existing children from database - check BOTH epicId matches AND jiraId matches
+      // This handles cases where children might exist but not be properly linked
+      const existingChildren = workItems.filter(item => 
+        item.epicId === epicWorkItem.id || // Properly linked children
+        (item.jiraId && freshEpicData.children.some((jiraChild: any) => jiraChild.jiraId === item.jiraId)) // Unlinked but existing children
+      );
       const existingChildrenJiraIds = new Set(existingChildren.map(child => child.jiraId));
       
-      console.log(`🔍 Found ${existingChildren.length} existing children in database`);
+      console.log(`🔍 Found ${existingChildren.length} existing children in database (including unlinked)`);
 
-      // Find new children that aren't in the database yet
+      // Find children that exist in Jira but not in our database at all
       const newChildren = freshEpicData.children.filter((child: any) => 
         !existingChildrenJiraIds.has(child.jiraId)
       );
 
+      // Find existing children that aren't properly linked to this epic
+      const unlinkedChildren = workItems.filter(item => 
+        item.jiraId && 
+        item.epicId !== epicWorkItem.id && // Not linked to this epic
+        freshEpicData.children.some((jiraChild: any) => jiraChild.jiraId === item.jiraId) // But should be
+      );
+
       console.log(`➕ Found ${newChildren.length} new children to add`);
+      console.log(`🔗 Found ${unlinkedChildren.length} existing children to link to this epic`);
 
       // Save new children to database
       const savedNewChildren: WorkItem[] = [];
@@ -249,12 +261,38 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
         }
       }
 
-      // Update work items with the new children
-      if (savedNewChildren.length > 0) {
-        // Add new children to the main work items array
-        const updatedWorkItems = [...workItems, ...savedNewChildren];
+      // Update existing children to link them to this epic
+      const updatedExistingChildren: WorkItem[] = [];
+      for (const unlinkedChild of unlinkedChildren) {
+        try {
+          console.log(`🔗 Linking existing child "${unlinkedChild.title}" to epic ${epicWorkItem.id}`);
+          const updatedChild = { ...unlinkedChild, epicId: epicWorkItem.id };
+          await workItemsApi.update(unlinkedChild.id, { epicId: epicWorkItem.id });
+          updatedExistingChildren.push(updatedChild);
+          console.log(`✅ Linked existing child: ${unlinkedChild.title}`);
+        } catch (error) {
+          console.error(`❌ Failed to link existing child ${unlinkedChild.title}:`, error);
+          // Continue with other children even if one fails
+        }
+      }
+
+      // Update work items with new children and updated links
+      if (savedNewChildren.length > 0 || updatedExistingChildren.length > 0) {
+        // Start with current work items
+        let updatedWorkItems = [...workItems];
         
-        // Get ALL children for this epic (existing + new) from the updated work items
+        // Add new children
+        updatedWorkItems = [...updatedWorkItems, ...savedNewChildren];
+        
+        // Update existing children that were re-linked
+        updatedExistingChildren.forEach(updatedChild => {
+          const index = updatedWorkItems.findIndex(item => item.id === updatedChild.id);
+          if (index !== -1) {
+            updatedWorkItems[index] = updatedChild;
+          }
+        });
+        
+        // Get ALL children for this epic (existing + new + re-linked) from the updated work items
         const allEpicChildren = updatedWorkItems.filter(item => item.epicId === epicWorkItem.id);
         
         // Update the epic work item's children property for display
@@ -270,19 +308,29 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
         
         console.log(`🔄 Epic refresh debug:`, {
           epicId: epicWorkItem.id,
+          jiraId: epicWorkItem.jiraId,
           existingChildrenBefore: epicWorkItem.children?.length || 0,
           newChildrenAdded: savedNewChildren.length,
+          existingChildrenLinked: updatedExistingChildren.length,
           allChildrenAfter: allEpicChildren.length,
-          updatedEpicChildren: updatedEpic.children.length
+          updatedEpicChildren: updatedEpic.children.length,
+          jiraChildrenCount: freshEpicData.children.length
         });
         
         onUpdateWorkItems(finalWorkItems);
-        console.log(`✅ Epic refreshed: Added ${savedNewChildren.length} new children`);
         
-        alert(`✅ Epic refreshed! Added ${savedNewChildren.length} new ticket(s):\n\n${savedNewChildren.map(child => `• ${child.title}`).join('\n')}`);
+        const totalUpdated = savedNewChildren.length + updatedExistingChildren.length;
+        console.log(`✅ Epic refreshed: Added ${savedNewChildren.length} new children, linked ${updatedExistingChildren.length} existing children`);
+        
+        const newChildrenText = savedNewChildren.length > 0 ? 
+          `\n\nNew children added:\n${savedNewChildren.map(child => `• ${child.title}`).join('\n')}` : '';
+        const linkedChildrenText = updatedExistingChildren.length > 0 ? 
+          `\n\nExisting children linked:\n${updatedExistingChildren.map(child => `• ${child.title}`).join('\n')}` : '';
+        
+        alert(`✅ Epic refreshed! Total: ${totalUpdated} ticket(s) updated${newChildrenText}${linkedChildrenText}`);
       } else {
-        console.log('✅ Epic is up to date - no new children found');
-        alert('✅ Epic is up to date - no new tickets found in Jira');
+        console.log('✅ Epic is up to date - no new or unlinked children found');
+        alert('✅ Epic is up to date - all tickets are already properly linked');
       }
 
     } catch (error) {

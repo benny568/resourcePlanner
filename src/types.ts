@@ -55,6 +55,7 @@ export interface Sprint {
   plannedVelocity: number;
   actualVelocity?: number;
   workItems: string[];
+  status?: 'active' | 'completed';
 }
 
 export interface PublicHoliday {
