@@ -8,7 +8,8 @@ import { HolidayManagement } from './components/HolidayManagement';
 import { SprintConfiguration } from './components/SprintConfiguration';
 import { JiraImport } from './components/JiraImport';
 import { DeliveryForecast } from './components/DeliveryForecast';
-import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3, Target } from 'lucide-react';
+import { SprintSync } from './components/SprintSync';
+import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3, Target, RefreshCw } from 'lucide-react';
 import { TeamMember, WorkItem, Epic, Sprint, PublicHoliday, SprintConfig } from './types';
 import { generateSprintsForYear } from './utils/dateUtils';
 import { teamMembersApi, workItemsApi, sprintsApi, holidaysApi, sprintConfigApi, transformers } from './services/api';
@@ -330,10 +331,8 @@ function App() {
       }
     }
 
-    // Generate new sprints based on the updated config
-    const year = sprintConfig.firstSprintStartDate.getFullYear();
-    const generatedSprints = generateSprintsForYear(sprintConfig, year);
-    updateSprints(generatedSprints);
+    // NOTE: Sprint regeneration is now handled explicitly by SprintConfiguration component
+    // This prevents duplicate sprint creation that was happening due to automatic + manual calls
   };
 
   // Handle Jira import completion
@@ -576,6 +575,7 @@ function App() {
     { id: 'work-items', label: 'Work Items', icon: Briefcase },
     { id: 'epics', label: 'Epics', icon: Briefcase },
     { id: 'sprints', label: 'Sprint Planning', icon: Calendar },
+    { id: 'sprint-sync', label: 'Sprint Sync', icon: RefreshCw },
     { id: 'holidays', label: 'Holidays', icon: CalendarIcon },
     { id: 'config', label: 'Configuration', icon: Settings },
     { id: 'jira-import', label: 'Import from Jira', icon: Download },
@@ -714,6 +714,12 @@ function App() {
             data={data}
             targetDeliveryDate={targetDeliveryDate}
             onSetTargetDeliveryDate={setTargetDeliveryDate}
+          />
+        )}
+        {activeTab === 'sprint-sync' && (
+          <SprintSync
+            data={data}
+            onSyncComplete={loadData}
           />
         )}
       </main>

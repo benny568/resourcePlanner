@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { SprintConfig, Sprint } from '../types';
-import { Settings, Calendar, Zap, Loader } from 'lucide-react';
+import { Settings, Calendar, Zap, Loader, Trash2, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { generateSprintsForYear, formatDateRange } from '../utils/dateUtils';
 
@@ -26,6 +26,28 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [selectedDataTypes, setSelectedDataTypes] = useState<string[]>([]);
+  const [confirmationText, setConfirmationText] = useState('');
+
+  const dataTypes = [
+    { id: 'teamMembers', label: 'All team members', description: 'Remove all team member data' },
+    { id: 'workItems', label: 'Work items and epics', description: 'Remove all work items, epics, and their dependencies' },
+    { id: 'sprints', label: 'Sprints and sprint assignments', description: 'Remove all sprints and work item assignments' },
+    { id: 'publicHolidays', label: 'Public holidays', description: 'Remove all public holiday data' },
+    { id: 'privateHolidays', label: 'Private holidays', description: 'Remove all personal holiday data' },
+    { id: 'dependencies', label: 'Dependencies and relationships', description: 'Remove all work item dependencies (included with work items)' }
+  ];
+
+  const handleDataTypeToggle = (dataTypeId: string) => {
+    setSelectedDataTypes(prev => 
+      prev.includes(dataTypeId) 
+        ? prev.filter(id => id !== dataTypeId)
+        : [...prev, dataTypeId]
+    );
+  };
 
   // Deduplicate sprints to prevent display issues (same logic as SprintPlanning)
   const deduplicatedSprints = useMemo(() => {
@@ -46,6 +68,52 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
     
     return deduplicated;
   }, [sprints]);
+
+  const handleResetDatabase = async () => {
+    if (selectedDataTypes.length === 0) {
+      setResetMessage('❌ Please select at least one data type to delete.');
+      return;
+    }
+
+    setIsResetting(true);
+    setResetMessage('');
+    setShowResetConfirm(false);
+    
+    try {
+      console.log('🚨 Starting selective database reset...', selectedDataTypes);
+      
+      const response = await fetch('/api/work-items/selective-reset', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataTypes: selectedDataTypes })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Selective reset failed: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Selective reset successful:', result);
+      
+      setResetMessage(`✅ Selected data deleted successfully! ${result.data?.summary || ''} Please refresh the page to see the changes.`);
+      
+      // Reset selections
+      setSelectedDataTypes([]);
+      setConfirmationText('');
+      
+      // Refresh the page after a short delay to show the changes
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+      
+    } catch (error) {
+      console.error('❌ Selective reset failed:', error);
+      setResetMessage(`❌ Reset failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleConfigUpdate = async () => {
     // Prevent multiple simultaneous updates
@@ -298,6 +366,143 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Database Reset Section */}
+      <div className="bg-white rounded-lg shadow p-6 border-l-4 border-red-500">
+        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2 text-red-700">
+          <AlertTriangle className="h-5 w-5" />
+          Danger Zone
+        </h2>
+        
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <h3 className="font-semibold text-red-800 mb-2">Selective Database Reset</h3>
+          <p className="text-red-700 text-sm mb-4">
+            Choose which data types to permanently delete from the database:
+          </p>
+          
+          <div className="space-y-3 mb-4">
+            {dataTypes.map((dataType) => (
+              <label key={dataType.id} className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedDataTypes.includes(dataType.id)}
+                  onChange={() => handleDataTypeToggle(dataType.id)}
+                  className="mt-1 h-4 w-4 text-red-600 border-red-300 rounded focus:ring-red-500"
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-red-800">{dataType.label}</div>
+                  <div className="text-sm text-red-600">{dataType.description}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+          
+          <div className="flex gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => setSelectedDataTypes(dataTypes.map(dt => dt.id))}
+              className="text-sm px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+            >
+              Select All
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDataTypes([])}
+              className="text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+            >
+              Clear All
+            </button>
+          </div>
+          
+          <p className="text-red-800 text-sm font-semibold">
+            ⚠️ This action cannot be undone! Make sure you have backups if needed.
+          </p>
+        </div>
+
+        {!showResetConfirm ? (
+          <button
+            onClick={() => {
+              if (selectedDataTypes.length === 0) {
+                setResetMessage('❌ Please select at least one data type to delete.');
+                return;
+              }
+              setShowResetConfirm(true);
+            }}
+            disabled={isResetting}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete Selected Data
+          </button>
+        ) : (
+          <div className="space-y-4">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p className="text-yellow-800 font-semibold mb-2">
+                Are you absolutely sure?
+              </p>
+              <p className="text-yellow-700 text-sm mb-2">
+                You are about to permanently delete the following data types:
+              </p>
+              <ul className="text-yellow-700 text-sm mb-3 ml-4 list-disc">
+                {selectedDataTypes.map(id => {
+                  const dataType = dataTypes.find(dt => dt.id === id);
+                  return <li key={id}>{dataType?.label}</li>;
+                })}
+              </ul>
+              <p className="text-yellow-700 text-sm">
+                Type "DELETE SELECTED" to confirm this action:
+              </p>
+              <input
+                type="text"
+                placeholder="Type DELETE SELECTED here"
+                value={confirmationText}
+                onChange={(e) => setConfirmationText(e.target.value)}
+                className="mt-2 w-full px-3 py-2 border border-yellow-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              />
+            </div>
+            
+            <div className="flex gap-2">
+              <button
+                onClick={handleResetDatabase}
+                disabled={confirmationText !== 'DELETE SELECTED' || isResetting}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isResetting ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Confirm Delete
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowResetConfirm(false);
+                  setConfirmationText('');
+                }}
+                disabled={isResetting}
+                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {resetMessage && (
+          <div className={`mt-4 p-3 rounded-lg ${
+            resetMessage.includes('✅') 
+              ? 'bg-green-50 border border-green-200 text-green-800' 
+              : 'bg-red-50 border border-red-200 text-red-800'
+          }`}>
+            {resetMessage}
           </div>
         )}
       </div>

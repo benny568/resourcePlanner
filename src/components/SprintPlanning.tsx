@@ -5,12 +5,24 @@ import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
+import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
   onUpdateWorkItems: (workItems: WorkItem[]) => void;
   onUpdateSprints: (sprints: Sprint[], useBatchOperation?: boolean, isRegeneration?: boolean, skipBackendSync?: boolean) => void;
 }
+
+// Helper function to get sprint name from assigned sprint IDs
+const getSprintName = (assignedSprints: string[], allSprints: Sprint[]): string => {
+  if (assignedSprints.length === 0) return 'ASSIGNED';
+  
+  // Get the first assigned sprint (assuming work items are typically assigned to one sprint)
+  const sprintId = assignedSprints[0];
+  const sprint = allSprints.find(s => s.id === sprintId);
+  
+  return sprint ? sprint.name : 'ASSIGNED';
+};
 
 export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   data,
@@ -46,6 +58,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     possibleEndDate?: Date | null;
     timestamp?: number;
   } | null>(null);
+  
+  // Velocity insights state
+  const [showVelocityInsights, setShowVelocityInsights] = useState(false);
   
   // DEBUG: Track autoAssignPreview state changes
   React.useEffect(() => {
@@ -443,6 +458,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const autoAssignItems = () => {
     const updatedWorkItems = [...data.workItems];
     let updatedSprints = [...data.sprints];
+    
+    // Apply velocity-aware planning if historical data is available
+    const velocityPlan = generateVelocityAwareSprintPlan(updatedSprints, updatedWorkItems, data.teamMembers);
+    if (velocityPlan.velocityInsights.analysis.sprintsWithData > 0) {
+      console.log('📊 Applying velocity-aware planning with historical data');
+      console.log('📈 Velocity insights:', velocityPlan.velocityInsights);
+      updatedSprints = velocityPlan.updatedSprints;
+    }
     
     // Get all items that need assignment (including epic children)
     const allUnassignedItems = [];
@@ -1447,6 +1470,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       <Calculator className="h-4 w-4" />
                       Auto-Assign Items
                     </button>
+                    <button
+                      onClick={() => setShowVelocityInsights(!showVelocityInsights)}
+                      className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 flex items-center gap-2"
+                    >
+                      <Target className="h-4 w-4" />
+                      Velocity Insights
+                    </button>
                                     <button
                   onClick={() => {
                     console.log('🖱️ CLEAR ALL BUTTON CLICKED!');
@@ -1487,6 +1517,131 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Velocity Insights Panel */}
+      {showVelocityInsights && (() => {
+        const velocityAnalysis = analyzeVelocityTrends(data.sprints);
+        const teamCapacity = analyzeTeamCapacity(data.teamMembers, data.workItems, velocityAnalysis);
+        const velocityPlan = generateVelocityAwareSprintPlan(data.sprints, data.workItems, data.teamMembers);
+        
+        return (
+          <div className="mb-6 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg shadow-lg p-6 border border-blue-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Target className="h-6 w-6 text-blue-600" />
+                📊 Velocity Insights & Planning Intelligence
+              </h3>
+              <button
+                onClick={() => setShowVelocityInsights(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Historical Velocity Analysis */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  📈 Historical Performance
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Average Velocity:</span>
+                    <span className="font-bold text-blue-600">{velocityAnalysis.averageVelocity} pts</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Velocity Trend:</span>
+                    <span className={`font-bold ${
+                      velocityAnalysis.velocityTrend === 'improving' ? 'text-green-600' :
+                      velocityAnalysis.velocityTrend === 'declining' ? 'text-red-600' : 'text-gray-600'
+                    }`}>
+                      {velocityAnalysis.velocityTrend === 'improving' ? '📈 Improving' :
+                       velocityAnalysis.velocityTrend === 'declining' ? '📉 Declining' : '📊 Stable'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Confidence Level:</span>
+                    <span className={`font-bold ${
+                      velocityAnalysis.confidenceLevel === 'high' ? 'text-green-600' :
+                      velocityAnalysis.confidenceLevel === 'medium' ? 'text-yellow-600' : 'text-red-600'
+                    }`}>
+                      {velocityAnalysis.confidenceLevel.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Sprints with Data:</span>
+                    <span className="font-bold text-purple-600">{velocityAnalysis.sprintsWithData}</span>
+                  </div>
+                  {velocityAnalysis.lastActualVelocity && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-600">Last Sprint:</span>
+                      <span className="font-bold text-blue-600">{velocityAnalysis.lastActualVelocity} pts</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-2 border-t">
+                    <span className="text-sm font-medium text-gray-700">Predicted Velocity:</span>
+                    <span className="font-bold text-green-600">{velocityAnalysis.predictedVelocity} pts</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Team Capacity Analysis */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  👥 Team Capacity
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Frontend Developers:</span>
+                    <span className="font-bold text-blue-600">{teamCapacity.frontendCapacity}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Backend Developers:</span>
+                    <span className="font-bold text-green-600">{teamCapacity.backendCapacity}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Total Team Members:</span>
+                    <span className="font-bold text-purple-600">{teamCapacity.totalCapacity}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t">
+                    <span className="text-sm font-medium text-gray-700">Recommended Utilization:</span>
+                    <span className="font-bold text-yellow-600">
+                      {Math.round(teamCapacity.utilizationRecommendation * 100)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Recommendations */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  💡 Recommendations
+                </h4>
+                <div className="space-y-2">
+                  {velocityPlan.velocityInsights.recommendations.length > 0 ? (
+                    velocityPlan.velocityInsights.recommendations.map((rec, index) => (
+                      <div key={index} className="text-sm text-gray-700 p-2 bg-yellow-50 rounded border-l-4 border-yellow-400">
+                        {rec}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-gray-500 italic">
+                      All systems are running optimally! 🎯
+                    </div>
+                  )}
+                  
+                  {velocityAnalysis.sprintsWithData === 0 && (
+                    <div className="text-sm text-blue-700 p-2 bg-blue-50 rounded border-l-4 border-blue-400">
+                      💡 Tip: Use the <strong>Sprint Sync</strong> tab to import completed sprint data from Jira for better velocity predictions.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Unassigned Items */}
@@ -1905,7 +2060,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                       }}>
                                         {isCompleted ? '✓ ' : ''}{child.jiraStatus || child.status}
                                       </span>
-                                      {isAssigned && !isCompleted && <span style={{ color: '#2563eb', fontWeight: '500' }}>📅 ASSIGNED</span>}
+                                      {isAssigned && !isCompleted && (
+                                        <span style={{ color: '#2563eb', fontWeight: '500' }}>
+                                          📅 {getSprintName(child.assignedSprints, data.sprints)}
+                                        </span>
+                                      )}
                                     </div>
                                     <span style={{ 
                                       fontWeight: '500',
