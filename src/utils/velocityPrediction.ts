@@ -214,16 +214,9 @@ export function generateVelocityAwareSprintPlan(
       return sprint;
     }
 
-    const optimalVelocity = calculateOptimalSprintVelocity(
-      velocityAnalysis,
-      teamCapacity,
-      sprint.plannedVelocity
-    );
-
-    return {
-      ...sprint,
-      plannedVelocity: optimalVelocity.recommendedVelocity
-    };
+    // Don't override planned velocities during auto-assign - preserve user's manual settings
+    // The velocity prediction should only suggest, not override existing values
+    return sprint;
   });
 
   // Generate recommendations

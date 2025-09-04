@@ -426,6 +426,7 @@ function App() {
                 ...existingItem,
                 title: updateItem.title, // Update title from Jira
                 description: updateItem.description, // Update description from Jira
+                estimateStoryPoints: updateItem.estimateStoryPoints, // Update story points from Jira
                 jiraStatus: updateItem.jiraStatus, // Update Jira status
                 status: updateItem.status // Update simplified status mapping
               };
@@ -505,6 +506,24 @@ function App() {
         }
         alertMessage += `\n🔄 Updated ${updatedWorkItems.length} existing work items\n🔄 Skipped ${duplicateTeamMembers.length} duplicate team members\n🔄 Skipped ${duplicateWorkItems.length} duplicate work items`;
         alert(alertMessage);
+      }
+      
+      // Auto-refresh data for single ticket imports to ensure UI shows latest values
+      const isSingleTicketImport = importedData.workItems.length === 1 && 
+                                   importedData.teamMembers.length === 0 && 
+                                   (!importedData.epics || importedData.epics.length === 0);
+      
+      if (isSingleTicketImport && updatedWorkItems.length > 0) {
+        console.log('🔄 Single ticket import detected - refreshing data to ensure UI consistency');
+        // Small delay to ensure database transaction is committed
+        setTimeout(async () => {
+          try {
+            await loadData();
+            console.log('✅ Data refreshed after single ticket import');
+          } catch (refreshError) {
+            console.error('❌ Failed to refresh data after single ticket import:', refreshError);
+          }
+        }, 500);
       }
       
     } catch (error) {

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
 import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
@@ -39,16 +39,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState<{x: number, y: number, itemId: string} | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
-  // Initialize all sprints as expanded by default
-  const [expandedSprints, setExpandedSprints] = useState<Set<string>>(() => {
-    const initialExpanded = new Set<string>();
-    // Expand first few sprints by default
-    data.sprints.slice(0, 5).forEach(sprint => {
-      initialExpanded.add(sprint.id);
-    });
-    return initialExpanded;
-  });
+  // Initialize all sprints as collapsed by default
+  const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
+  const [showBottleneckAnalysis, setShowBottleneckAnalysis] = useState<boolean>(false);
   
   // Auto-assign preview state
   const [autoAssignPreview, setAutoAssignPreview] = useState<{
@@ -454,8 +448,188 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     });
   }, [quarterGroups, currentWorkItems, data.teamMembers, data.publicHolidays, autoAssignPreview?.timestamp]);
 
-  // Enhanced Auto-Assign Items with 70% capacity targeting and preview
+  // Comprehensive bottleneck analysis for UI display
+  const analyzeCapacityBottlenecks = () => {
+    if (sprintData.length === 0) return null;
+    
+    const sampleSprint = sprintData[0];
+    const frontendCapacity = sampleSprint.skillCapacities.frontend;
+    const backendCapacity = sampleSprint.skillCapacities.backend;
+    const totalCapacity = sampleSprint.capacity;
+    
+    const frontendRatio = frontendCapacity / totalCapacity;
+    const backendRatio = backendCapacity / totalCapacity;
+    
+    // Analyze work items skill requirements
+    const workItemsRequiringFrontend = data.workItems.filter(item => 
+      item.requiredSkills.includes('frontend')).length;
+    const workItemsRequiringBackend = data.workItems.filter(item => 
+      item.requiredSkills.includes('backend')).length;
+    const workItemsRequiringBoth = data.workItems.filter(item => 
+      item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')).length;
+    
+    // Calculate current utilization across all sprints
+    console.log(`🔍 Analyzing ${sprintData.length} sprints for capacity bottlenecks`);
+    let totalFrontendAssigned = 0;
+    let totalBackendAssigned = 0;
+    let totalOverallAssigned = 0;
+    let totalCapacityAvailable = 0;
+    let totalFrontendCapacityAvailable = 0;
+    let totalBackendCapacityAvailable = 0;
+    
+    sprintData.forEach(sprintInfo => {
+      const assignedItems = sprintInfo.assignedItems;
+      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}`);
+      
+      assignedItems.forEach(item => {
+        // For overall utilization, count each item only once
+        totalOverallAssigned += item.estimateStoryPoints;
+        
+        // For skill-specific utilization, allocate points based on required skills
+        if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
+          // Split points between frontend and backend for items requiring both
+          totalFrontendAssigned += item.estimateStoryPoints / 2;
+          totalBackendAssigned += item.estimateStoryPoints / 2;
+        } else if (item.requiredSkills.includes('frontend')) {
+          // Frontend-only items
+          totalFrontendAssigned += item.estimateStoryPoints;
+        } else if (item.requiredSkills.includes('backend')) {
+          // Backend-only items
+          totalBackendAssigned += item.estimateStoryPoints;
+        }
+      });
+      totalCapacityAvailable += sprintInfo.capacity;
+      totalFrontendCapacityAvailable += sprintInfo.skillCapacities?.frontend || 0;
+      totalBackendCapacityAvailable += sprintInfo.skillCapacities?.backend || 0;
+    });
+    
+    const frontendUtilization = totalFrontendCapacityAvailable > 0 ? 
+      (totalFrontendAssigned / totalFrontendCapacityAvailable) * 100 : 0;
+    const backendUtilization = totalBackendCapacityAvailable > 0 ? 
+      (totalBackendAssigned / totalBackendCapacityAvailable) * 100 : 0;
+    const overallUtilization = totalCapacityAvailable > 0 ? 
+      (totalOverallAssigned / totalCapacityAvailable) * 100 : 0;
+    
+    // Debug logging for utilization calculation
+    console.log('🔍 UTILIZATION DEBUG:', {
+      totalFrontendAssigned,
+      totalBackendAssigned,
+      totalOverallAssigned,
+      totalFrontendCapacityAvailable,
+      totalBackendCapacityAvailable,
+      totalCapacityAvailable,
+      frontendUtilization: frontendUtilization.toFixed(1) + '%',
+      backendUtilization: backendUtilization.toFixed(1) + '%',
+      overallUtilization: overallUtilization.toFixed(1) + '%'
+    });
+    
+    // Determine bottleneck
+    const isBottleneck = frontendRatio < 0.4 || backendRatio < 0.4;
+    const limitingSkill = frontendRatio < backendRatio ? 'frontend' : 'backend';
+    const limitingCapacity = limitingSkill === 'frontend' ? frontendCapacity : backendCapacity;
+    const limitingRatio = limitingSkill === 'frontend' ? frontendRatio : backendRatio;
+    const limitingUtilization = limitingSkill === 'frontend' ? frontendUtilization : backendUtilization;
+    
+    return {
+      isBottleneck,
+      limitingSkill,
+      limitingCapacity,
+      limitingRatio,
+      limitingUtilization,
+      frontendCapacity,
+      backendCapacity,
+      totalCapacity,
+      frontendRatio,
+      backendRatio,
+      frontendUtilization,
+      backendUtilization,
+      overallUtilization,
+      workItemsRequiringFrontend,
+      workItemsRequiringBackend,
+      workItemsRequiringBoth,
+      totalFrontendCapacityAvailable,
+      totalBackendCapacityAvailable,
+      totalCapacityAvailable
+    };
+  };
+
+  // Check for skill capacity bottlenecks before auto-assign
+  const checkSkillBottlenecks = () => {
+    const sampleSprint = sprintData[0];
+    if (!sampleSprint) {
+      console.log('🚨 No sprint data available for bottleneck check');
+      return null;
+    }
+    
+    const frontendCapacity = sampleSprint.skillCapacities.frontend;
+    const backendCapacity = sampleSprint.skillCapacities.backend;
+    const totalCapacity = sampleSprint.capacity;
+    
+    console.log('🔍 BOTTLENECK CHECK:', {
+      frontendCapacity,
+      backendCapacity,
+      totalCapacity,
+      sprintName: sampleSprint.sprint.name
+    });
+    
+    const frontendRatio = frontendCapacity / totalCapacity;
+    const backendRatio = backendCapacity / totalCapacity;
+    
+    console.log('📊 CAPACITY RATIOS:', {
+      frontendRatio: `${(frontendRatio * 100).toFixed(1)}%`,
+      backendRatio: `${(backendRatio * 100).toFixed(1)}%`,
+      frontendUnder40: frontendRatio < 0.4,
+      backendUnder40: backendRatio < 0.4
+    });
+    
+    // Check for significant imbalance (one skill < 40% of total capacity)
+    if (frontendRatio < 0.4 || backendRatio < 0.4) {
+      const limitingSkill = frontendRatio < backendRatio ? 'frontend' : 'backend';
+      const limitingCapacity = limitingSkill === 'frontend' ? frontendCapacity : backendCapacity;
+      const limitingRatio = limitingSkill === 'frontend' ? frontendRatio : backendRatio;
+      
+      const bottleneck = {
+        limitingSkill,
+        limitingCapacity,
+        limitingRatio,
+        maxUtilization: (limitingCapacity / totalCapacity) * 100
+      };
+      
+      console.log('⚠️ BOTTLENECK DETECTED:', bottleneck);
+      return bottleneck;
+    }
+    
+    console.log('✅ No bottleneck detected - capacities are balanced');
+    return null;
+  };
+
+  // Enhanced Auto-Assign Items with 100% capacity targeting and preview
   const autoAssignItems = () => {
+    console.log('🚀 AUTO-ASSIGN STARTED - Function called');
+    // Check for skill bottlenecks first
+    let bottleneck = null;
+    try {
+      bottleneck = checkSkillBottlenecks();
+    } catch (error) {
+      console.error('❌ Error in checkSkillBottlenecks:', error);
+    }
+    if (bottleneck) {
+      const proceed = confirm(
+        `⚠️ SKILL CAPACITY BOTTLENECK DETECTED\n\n` +
+        `Your team has a ${bottleneck.limitingSkill} capacity bottleneck:\n` +
+        `• ${bottleneck.limitingSkill.charAt(0).toUpperCase() + bottleneck.limitingSkill.slice(1)} capacity: ${bottleneck.limitingCapacity.toFixed(1)} points (${(bottleneck.limitingRatio * 100).toFixed(1)}% of total)\n` +
+        `• This limits sprint utilization to ~${bottleneck.maxUtilization.toFixed(0)}% instead of 100%\n\n` +
+        `Recommendations:\n` +
+        `1. Add ${bottleneck.limitingSkill} skills to existing team members\n` +
+        `2. Hire more ${bottleneck.limitingSkill} developers\n` +
+        `3. Review work item skill classifications\n\n` +
+        `Continue with auto-assign anyway?`
+      );
+      
+      if (!proceed) {
+        return;
+      }
+    }
     const updatedWorkItems = [...data.workItems];
     let updatedSprints = [...data.sprints];
     
@@ -570,7 +744,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     }
 
-    // Track sprint utilizations for 70% capacity targeting
+    // Track sprint utilizations for 100% capacity targeting
     const sprintUtilizations = new Map();
     let lastAssignedSprintEndDate: Date | null = null;
 
@@ -620,7 +794,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // For higher priority items (Critical, High), allow more aggressive filling of earlier sprints
       // For lower priority items (Medium, Low), be more conservative and prefer later sprints
       const priorityBonus = priorityOrder[itemPriority] <= 2 ? 0.1 : 0; // Critical/High get 10% bonus capacity
-      const targetUtilization = priorityOrder[itemPriority] <= 2 ? 0.8 : 0.7; // Critical/High can fill to 80%
+      const targetUtilization = 1.0; // Fill sprints to 100% capacity
       
       console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
       
@@ -700,18 +874,38 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         });
         
         // Check if adding this item would exceed priority-based capacity in any skill
-        const skillCapacityCheck = item.requiredSkills.every(skill => {
-          if (skill === 'frontend') {
+        // For items requiring both skills, use a more balanced approach
+        const skillCapacityCheck = (() => {
+          if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
+            // For full-stack items, check if either skill can accommodate the work
+            // This allows better utilization when one skill has more capacity
             const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-            console.log(`   🎨 Frontend check: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            return newFrontendUtil <= targetUtilization;
-          } else if (skill === 'backend') {
             const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-            console.log(`   ⚙️ Backend check: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            return newBackendUtil <= targetUtilization;
+            
+            console.log(`   🔄 Full-stack item check:`);
+            console.log(`   🎨 Frontend: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            console.log(`   ⚙️ Backend: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            
+            // Allow assignment if the average utilization is within target
+            const avgUtil = (newFrontendUtil + newBackendUtil) / 2;
+            console.log(`   📊 Average utilization: ${avgUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            return avgUtil <= targetUtilization;
+          } else {
+            // For single-skill items, use the original strict checking
+            return item.requiredSkills.every(skill => {
+              if (skill === 'frontend') {
+                const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
+                console.log(`   🎨 Frontend-only check: ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+                return newFrontendUtil <= targetUtilization;
+              } else if (skill === 'backend') {
+                const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+                console.log(`   ⚙️ Backend-only check: ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+                return newBackendUtil <= targetUtilization;
+              }
+              return true;
+            });
           }
-          return true;
-        });
+        })();
         
         const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
         console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: ${targetUtilization * 100}%)`);
@@ -1477,6 +1671,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       <Target className="h-4 w-4" />
                       Velocity Insights
                     </button>
+                    <button
+                      onClick={() => setShowBottleneckAnalysis(!showBottleneckAnalysis)}
+                      className="px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600 flex items-center gap-2"
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                      Capacity Analysis
+                    </button>
                                     <button
                   onClick={() => {
                     console.log('🖱️ CLEAR ALL BUTTON CLICKED!');
@@ -1643,9 +1844,162 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         );
       })()}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Bottleneck Analysis Panel */}
+      {showBottleneckAnalysis && (() => {
+        const analysis = analyzeCapacityBottlenecks();
+        if (!analysis) return null;
+        
+        return (
+          <div className="mb-6 bg-gradient-to-r from-amber-50 to-red-50 rounded-lg shadow-lg p-6 border border-amber-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <BarChart3 className="h-6 w-6 text-amber-600" />
+                🔍 Capacity Bottleneck Analysis
+              </h3>
+              <button
+                onClick={() => setShowBottleneckAnalysis(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Capacity Distribution */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  📊 Team Capacity Distribution
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Frontend Capacity:</span>
+                    <div className="text-right">
+                      <span className="font-bold text-blue-600">{analysis.frontendCapacity.toFixed(1)} pts</span>
+                      <div className="text-xs text-gray-500">({(analysis.frontendRatio * 100).toFixed(1)}% of total)</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Backend Capacity:</span>
+                    <div className="text-right">
+                      <span className="font-bold text-green-600">{analysis.backendCapacity.toFixed(1)} pts</span>
+                      <div className="text-xs text-gray-500">({(analysis.backendRatio * 100).toFixed(1)}% of total)</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t">
+                    <span className="text-sm font-medium text-gray-700">Total Capacity:</span>
+                    <span className="font-bold text-gray-800">{analysis.totalCapacity.toFixed(1)} pts</span>
+                  </div>
+                  
+                  {/* Visual capacity bar */}
+                  <div className="mt-4">
+                    <div className="flex h-4 bg-gray-200 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-blue-500 flex items-center justify-center text-xs text-white font-medium"
+                        style={{ width: `${analysis.frontendRatio * 100}%` }}
+                      >
+                        {analysis.frontendRatio > 0.15 ? 'FE' : ''}
+                      </div>
+                      <div 
+                        className="bg-green-500 flex items-center justify-center text-xs text-white font-medium"
+                        style={{ width: `${analysis.backendRatio * 100}%` }}
+                      >
+                        {analysis.backendRatio > 0.15 ? 'BE' : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Current Utilization */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  📈 Current Utilization
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Frontend Utilization:</span>
+                    <div className="text-right">
+                      <span className={`font-bold ${analysis.frontendUtilization > 70 ? 'text-red-600' : analysis.frontendUtilization > 50 ? 'text-amber-600' : 'text-green-600'}`}>
+                        {analysis.frontendUtilization.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Backend Utilization:</span>
+                    <div className="text-right">
+                      <span className={`font-bold ${analysis.backendUtilization > 70 ? 'text-red-600' : analysis.backendUtilization > 50 ? 'text-amber-600' : 'text-green-600'}`}>
+                        {analysis.backendUtilization.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t">
+                    <span className="text-sm font-medium text-gray-700">Overall Utilization:</span>
+                    <span className={`font-bold ${analysis.overallUtilization > 70 ? 'text-red-600' : analysis.overallUtilization > 50 ? 'text-amber-600' : 'text-green-600'}`}>
+                      {analysis.overallUtilization.toFixed(1)}%
+                    </span>
+                  </div>
+                  
+                  {/* Bottleneck indicator */}
+                  {analysis.isBottleneck && (
+                    <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <div className="flex items-center gap-2 text-red-700 font-medium">
+                        <AlertCircle className="h-4 w-4" />
+                        Bottleneck Detected!
+                      </div>
+                      <div className="text-sm text-red-600 mt-1">
+                        <strong>{analysis.limitingSkill.charAt(0).toUpperCase() + analysis.limitingSkill.slice(1)}</strong> capacity 
+                        ({(analysis.limitingRatio * 100).toFixed(1)}% of total) is limiting sprint utilization to {analysis.limitingUtilization.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  💡 Recommendations
+                </h4>
+                <div className="space-y-3">
+                  {analysis.isBottleneck ? (
+                    <>
+                      <div className="text-sm text-red-700 p-2 bg-red-50 rounded border-l-4 border-red-400">
+                        <strong>🚨 {analysis.limitingSkill.charAt(0).toUpperCase() + analysis.limitingSkill.slice(1)} Bottleneck:</strong>
+                        <br />Your {analysis.limitingSkill} team is at {analysis.limitingUtilization.toFixed(1)}% utilization, preventing higher sprint fill rates.
+                      </div>
+                      
+                      <div className="text-sm text-amber-700 p-2 bg-amber-50 rounded border-l-4 border-amber-400">
+                        <strong>📋 Work Item Distribution:</strong>
+                        <br />• {analysis.workItemsRequiringFrontend} items need Frontend
+                        <br />• {analysis.workItemsRequiringBackend} items need Backend  
+                        <br />• {analysis.workItemsRequiringBoth} items need Both skills
+                      </div>
+                      
+                      <div className="text-sm text-blue-700 p-2 bg-blue-50 rounded border-l-4 border-blue-400">
+                        <strong>🎯 Solutions:</strong>
+                        <br />• Cross-train team members in {analysis.limitingSkill}
+                        <br />• Split large {analysis.limitingSkill} items into smaller pieces
+                        <br />• Hire more {analysis.limitingSkill} developers
+                        <br />• Reduce {analysis.limitingSkill} dependencies where possible
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-green-700 p-2 bg-green-50 rounded border-l-4 border-green-400">
+                      <strong>✅ Balanced Capacity:</strong>
+                      <br />Your team capacity is well-balanced. Auto-assign should achieve close to 70% utilization.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Container height doubled for better visibility */}
+      <div className="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-50px)] h-[calc(100vh-50px)]">
         {/* Unassigned Items */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="w-full lg:w-1/3 bg-white rounded-lg shadow p-6 flex flex-col">
           <h3 className="text-lg font-semibold mb-4">Unassigned Work Items</h3>
           
 
@@ -1658,7 +2012,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               <p>All items are assigned!</p>
             </div>
           ) : (
-            <div className="space-y-4 min-h-96 overflow-visible">{/* TEMP: Removed overflow restriction for testing */}
+            <div className="space-y-4 overflow-y-auto flex-1 pr-2">{/* Added independent scrolling */}
               {/* Ready Items */}
               {readyItems.length > 0 && (
                 <div>
@@ -2119,8 +2473,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         </div>
 
         {/* Sprint Capacity Overview */}
-        <div className="lg:col-span-2 space-y-6">
-          <h3 className="text-lg font-semibold">Sprint Assignments</h3>
+        <div className="w-full lg:w-2/3 flex flex-col">
+          <h3 className="text-lg font-semibold mb-6">Sprint Assignments</h3>
+          <div className="overflow-y-auto flex-1 pr-2 space-y-6">{/* Added independent scrolling for sprints */}
           
           {(() => {
             console.log('🎨 QUARTER GROUPS RENDER:', {
@@ -2238,11 +2593,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         </div>
                         <div className="flex items-start gap-3">
                           <div className="text-right">
-                            <div className={`font-semibold ${getUtilizationColor(utilization)}`}>
-                              {utilization.toFixed(0)}% utilized
+                            <div className={`font-semibold ${getUtilizationColor(
+                              (assignedPoints / sprint.plannedVelocity) * 100
+                            )}`}>
+                              {((assignedPoints / sprint.plannedVelocity) * 100).toFixed(0)}% utilized
                             </div>
                             <div className="text-sm text-gray-500">
-                              {assignedPoints} / {capacity.toFixed(1)} pts
+                              {assignedPoints} / {sprint.plannedVelocity} pts
                             </div>
                           </div>
                           {/* Complete Sprint button for active sprints */}
@@ -2410,6 +2767,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               </div>
             </div>
           ))}
+          </div>
         </div>
       </div>
 

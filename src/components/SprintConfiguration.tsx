@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { SprintConfig, Sprint } from '../types';
-import { Settings, Calendar, Zap, Loader, Trash2, AlertTriangle } from 'lucide-react';
+import { Settings, Calendar, Zap, Loader, Trash2, AlertTriangle, Save, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { generateSprintsForYear, formatDateRange } from '../utils/dateUtils';
 
@@ -31,6 +31,11 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [selectedDataTypes, setSelectedDataTypes] = useState<string[]>([]);
   const [confirmationText, setConfirmationText] = useState('');
+  
+  // Track pending velocity changes and saving states
+  const [pendingVelocityChanges, setPendingVelocityChanges] = useState<{[sprintId: string]: number}>({});
+  const [savingVelocity, setSavingVelocity] = useState<{[sprintId: string]: boolean}>({});
+  const [velocitySaveMessages, setVelocitySaveMessages] = useState<{[sprintId: string]: string}>({});
 
   const dataTypes = [
     { id: 'teamMembers', label: 'All team members', description: 'Remove all team member data' },
@@ -157,12 +162,63 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
     }
   };
 
-  const updateSprintVelocity = async (sprintId: string, velocity: number) => {
-    // Use the original sprints array for updates to maintain all data, but only update the specific sprint
-    const updatedSprints = sprints.map(sprint =>
-      sprint.id === sprintId ? { ...sprint, plannedVelocity: velocity } : sprint
-    );
-    await onUpdateSprints(updatedSprints); // Single sprint update, use individual operation
+  const updateSprintVelocity = (sprintId: string, velocity: number) => {
+    // Track the pending change instead of immediately saving
+    setPendingVelocityChanges(prev => ({
+      ...prev,
+      [sprintId]: velocity
+    }));
+    
+    // Clear any previous save message for this sprint
+    setVelocitySaveMessages(prev => ({
+      ...prev,
+      [sprintId]: ''
+    }));
+  };
+
+  const saveSprintVelocity = async (sprintId: string) => {
+    const newVelocity = pendingVelocityChanges[sprintId];
+    if (newVelocity === undefined) return;
+
+    setSavingVelocity(prev => ({ ...prev, [sprintId]: true }));
+    setVelocitySaveMessages(prev => ({ ...prev, [sprintId]: '' }));
+
+    try {
+      // Update the sprints array with the new velocity
+      const updatedSprints = sprints.map(sprint =>
+        sprint.id === sprintId ? { ...sprint, plannedVelocity: newVelocity } : sprint
+      );
+      await onUpdateSprints(updatedSprints);
+
+      // Clear the pending change for this sprint
+      setPendingVelocityChanges(prev => {
+        const newChanges = { ...prev };
+        delete newChanges[sprintId];
+        return newChanges;
+      });
+
+      setVelocitySaveMessages(prev => ({
+        ...prev,
+        [sprintId]: 'Velocity saved successfully!'
+      }));
+
+      // Clear success message after 2 seconds
+      setTimeout(() => {
+        setVelocitySaveMessages(prev => ({
+          ...prev,
+          [sprintId]: ''
+        }));
+      }, 2000);
+
+    } catch (error) {
+      setVelocitySaveMessages(prev => ({
+        ...prev,
+        [sprintId]: 'Failed to save velocity'
+      }));
+      console.error('Failed to save sprint velocity:', error);
+    } finally {
+      setSavingVelocity(prev => ({ ...prev, [sprintId]: false }));
+    }
   };
 
   const generateSprintsForNextYear = () => {
@@ -325,10 +381,44 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
                       <input
                         type="number"
                         min="1"
-                        value={sprint.plannedVelocity}
+                        value={pendingVelocityChanges[sprint.id] ?? sprint.plannedVelocity}
                         onChange={(e) => updateSprintVelocity(sprint.id, Number(e.target.value))}
-                        className="w-20 px-2 py-1 border rounded text-sm"
+                        className={`w-20 px-2 py-1 border rounded text-sm ${
+                          pendingVelocityChanges[sprint.id] !== undefined 
+                            ? 'border-amber-300 bg-amber-50' 
+                            : 'border-gray-300'
+                        }`}
                       />
+                      
+                      {/* Save Button - only show if there are pending changes */}
+                      {pendingVelocityChanges[sprint.id] !== undefined && (
+                        <button
+                          onClick={() => saveSprintVelocity(sprint.id)}
+                          disabled={savingVelocity[sprint.id]}
+                          className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {savingVelocity[sprint.id] ? (
+                            <Loader className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Save className="h-3 w-3" />
+                          )}
+                          Save
+                        </button>
+                      )}
+                      
+                      {/* Success/Error Message */}
+                      {velocitySaveMessages[sprint.id] && (
+                        <div className={`flex items-center gap-1 text-xs ${
+                          velocitySaveMessages[sprint.id].includes('successfully') 
+                            ? 'text-green-600' 
+                            : 'text-red-600'
+                        }`}>
+                          {velocitySaveMessages[sprint.id].includes('successfully') && (
+                            <CheckCircle className="h-3 w-3" />
+                          )}
+                          {velocitySaveMessages[sprint.id]}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
