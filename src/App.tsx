@@ -9,7 +9,8 @@ import { SprintConfiguration } from './components/SprintConfiguration';
 import { JiraImport } from './components/JiraImport';
 import { DeliveryForecast } from './components/DeliveryForecast';
 import { SprintSync } from './components/SprintSync';
-import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3, Target, RefreshCw } from 'lucide-react';
+import { EpicRoadmap } from './components/EpicRoadmap';
+import { Calendar, Users, Briefcase, Calendar as CalendarIcon, Settings, Download, Wifi, WifiOff, BarChart3, Target, RefreshCw, Map } from 'lucide-react';
 import { TeamMember, WorkItem, Epic, Sprint, PublicHoliday, SprintConfig } from './types';
 import { generateSprintsForYear } from './utils/dateUtils';
 import { teamMembersApi, workItemsApi, sprintsApi, holidaysApi, sprintConfigApi, transformers } from './services/api';
@@ -590,6 +591,7 @@ function App() {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'delivery-forecast', label: 'Delivery Forecast', icon: Target },
+    { id: 'epic-roadmap', label: 'Epic Roadmap', icon: Map },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'work-items', label: 'Work Items', icon: Briefcase },
     { id: 'epics', label: 'Epics', icon: Briefcase },
@@ -733,6 +735,12 @@ function App() {
             data={data}
             targetDeliveryDate={targetDeliveryDate}
             onSetTargetDeliveryDate={setTargetDeliveryDate}
+          />
+        )}
+        {activeTab === 'epic-roadmap' && (
+          <EpicRoadmap
+            workItems={data.workItems}
+            sprints={data.sprints}
           />
         )}
         {activeTab === 'sprint-sync' && (

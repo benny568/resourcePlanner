@@ -107,6 +107,9 @@ export const workItemsApi = {
     apiRequest<any>(`/work-items/${workItemId}/assign-sprint/${sprintId}`, {
       method: 'DELETE',
     }),
+
+  searchByTicketId: (ticketId: string) =>
+    apiRequest<any>(`/work-items/search/${encodeURIComponent(ticketId)}`),
 };
 
 // Sprints API

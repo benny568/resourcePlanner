@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, RotateCcw, ChevronDown, ChevronRight, Save, X, ExternalLink, BarChart3, AlertCircle, Search } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
+import { calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
@@ -55,6 +55,128 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   
   // Velocity insights state
   const [showVelocityInsights, setShowVelocityInsights] = useState(false);
+  
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResult, setSearchResult] = useState<{
+    workItem: any;
+    sprints: any[];
+  } | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [highlightedTicket, setHighlightedTicket] = useState<string | null>(null);
+  
+  // Helper function to create new sprints based on sprint configuration
+  const createNewSprints = (fromExistingSprints: Sprint[], sprintConfig: any, count: number = 1): Sprint[] => {
+    const newSprints: Sprint[] = [];
+    const lastSprint = fromExistingSprints[fromExistingSprints.length - 1];
+    
+    if (!lastSprint) {
+      console.error('❌ Cannot create new sprints: no existing sprints found');
+      return [];
+    }
+    
+    // Start the new sprint(s) after the last existing sprint
+    let currentSprintStart = new Date(lastSprint.endDate);
+    currentSprintStart.setDate(currentSprintStart.getDate() + 1); // Next day after last sprint ends
+    
+    for (let i = 0; i < count; i++) {
+      const sprintEnd = new Date(currentSprintStart);
+      sprintEnd.setDate(sprintEnd.getDate() + sprintConfig.sprintDurationDays - 1);
+      
+      // Calculate sprint number by counting existing sprints plus new ones
+      const totalSprintCount = fromExistingSprints.length + newSprints.length + 1;
+      
+      // Get quarter info for naming
+      const quarterInfo = getQuarterInfo(currentSprintStart);
+      
+      // Count sprints in this quarter to determine sprint number within quarter
+      const sprintsInQuarter = [...fromExistingSprints, ...newSprints].filter(s => {
+        const sQuarter = getQuarterInfo(s.startDate);
+        return sQuarter.quarterString === quarterInfo.quarterString;
+      });
+      
+      const quarterSprintNumber = sprintsInQuarter.length + 1;
+      
+      const newSprint: Sprint = {
+        id: `sprint-${new Date().getFullYear()}-${totalSprintCount}`,
+        name: `${quarterInfo.quarterString} Sprint ${quarterSprintNumber}`,
+        startDate: new Date(currentSprintStart),
+        endDate: sprintEnd,
+        plannedVelocity: sprintConfig.defaultVelocity,
+        workItems: []
+      };
+      
+      newSprints.push(newSprint);
+      console.log(`➕ Created new sprint: ${newSprint.name} (${format(newSprint.startDate, 'MMM dd')} - ${format(newSprint.endDate, 'MMM dd, yyyy')})`);
+      
+      // Move to next sprint start date
+      currentSprintStart = new Date(sprintEnd);
+      currentSprintStart.setDate(currentSprintStart.getDate() + 1);
+    }
+    
+    return newSprints;
+  };
+  
+  // Helper function to get quarter info (needed for sprint naming)
+  const getQuarterInfo = (date: Date) => {
+    const month = date.getMonth() + 1; // getMonth() returns 0-11
+    const year = date.getFullYear();
+    
+    let quarter: number;
+    if (month <= 3) quarter = 1;
+    else if (month <= 6) quarter = 2;
+    else if (month <= 9) quarter = 3;
+    else quarter = 4;
+    
+    return {
+      quarter,
+      year,
+      quarterString: `REF Q${quarter} ${year}`
+    };
+  };
+
+  // Search function
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchError('Please enter a ticket ID');
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResult(null);
+    setHighlightedTicket(null);
+
+    try {
+      const result = await workItemsApi.searchByTicketId(searchQuery.trim());
+      
+      if (result) {
+        setSearchResult(result);
+        setHighlightedTicket(result.workItem.jiraId);
+        // Auto-expand sprints that contain the ticket
+        if (result.sprints.length > 0) {
+          const sprintIds = new Set(result.sprints.map((s: any) => s.id));
+          setExpandedSprints(prev => new Set([...prev, ...sprintIds]));
+        }
+      } else {
+        setSearchError(`No work item found with ticket ID: ${searchQuery}`);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchError(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // Clear search results
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResult(null);
+    setSearchError(null);
+    setHighlightedTicket(null);
+  };
   
   // DEBUG: Track autoAssignPreview state changes
   React.useEffect(() => {
@@ -957,8 +1079,42 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       
       // If not assigned to existing sprints, create new sprint if needed
       if (!assigned) {
-        // TODO: Implement new sprint creation based on sprint configuration
-        console.log(`⚠️ Item ${item.title} could not be assigned - may need new sprint creation`);
+        console.log(`🔄 Item ${item.title} could not be assigned to existing sprints - creating new sprint...`);
+        
+        // Create a new sprint to accommodate this item
+        const newSprints = createNewSprints(updatedSprints, data.sprintConfig, 1);
+        
+        if (newSprints.length > 0) {
+          const newSprint = newSprints[0];
+          updatedSprints.push(newSprint);
+          
+          // Try to assign the item to the new sprint
+          const skillCapacities = calculateSprintSkillCapacities(newSprint, data.teamMembers, data.publicHolidays);
+          
+          // Check if item can be assigned to the new sprint
+          const skillRequired = item.requiredSkills[0]; // Primary skill for this item
+          const skillCapacityAvailable = skillCapacities[skillRequired] || 0;
+          
+          if (item.estimateStoryPoints <= skillCapacityAvailable) {
+            // Assign the item to the new sprint
+            newSprint.workItems.push(item.id);
+            
+            // Update work item to reflect sprint assignment
+            const workItemIndex = updatedWorkItems.findIndex(wi => wi.id === item.id);
+            if (workItemIndex !== -1) {
+              updatedWorkItems[workItemIndex] = {
+                ...updatedWorkItems[workItemIndex],
+                assignedSprints: [newSprint.id]
+              };
+            }
+            
+            console.log(`✅ Assigned "${item.title}" to newly created sprint "${newSprint.name}"`);
+          } else {
+            console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${item.estimateStoryPoints})`);
+          }
+        } else {
+          console.log(`❌ Failed to create new sprint for item "${item.title}"`);
+        }
       }
     });
 
@@ -1613,10 +1769,48 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       {/* Header with actions */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Target className="h-5 w-5" />
-            Sprint Planning
-          </h2>
+          <div className="flex items-center gap-6">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Sprint Planning
+            </h2>
+            
+            {/* Search Section */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search ticket ID (e.g., REF-1234)"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  className="pl-8 pr-4 py-2 border border-gray-300 rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
+              </div>
+              <button
+                onClick={handleSearch}
+                disabled={searchLoading}
+                className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 text-sm flex items-center gap-1"
+              >
+                {searchLoading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+                Search
+              </button>
+              {(searchResult || searchError) && (
+                <button
+                  onClick={clearSearch}
+                  className="px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 text-sm flex items-center gap-1"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
                             <div className="flex gap-2">
                     {(() => {
                       console.log('🎨 UI RENDER CHECK:', {
@@ -1718,6 +1912,98 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Search Results Section */}
+      {(searchResult || searchError) && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Search className="h-5 w-5" />
+            Search Results
+          </h3>
+          
+          {searchError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+              <div className="flex items-center gap-2 text-red-800">
+                <AlertCircle className="h-4 w-4" />
+                <span className="font-medium">Not Found</span>
+              </div>
+              <p className="text-red-700 text-sm mt-1">{searchError}</p>
+            </div>
+          )}
+          
+          {searchResult && (
+            <div className="space-y-4">
+              {/* Work Item Details */}
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h4 className="font-medium text-blue-900">
+                      {searchResult.workItem.jiraId}: {searchResult.workItem.title}
+                    </h4>
+                    <p className="text-blue-700 text-sm mt-1">{searchResult.workItem.description}</p>
+                    <div className="flex items-center gap-4 mt-2 text-sm text-blue-600">
+                      <span>{searchResult.workItem.estimateStoryPoints} story points</span>
+                      <span className={`px-2 py-1 rounded ${
+                        searchResult.workItem.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                        searchResult.workItem.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {searchResult.workItem.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Sprint Assignments */}
+              {searchResult.sprints.length > 0 ? (
+                <div>
+                  <h5 className="font-medium text-gray-900 mb-2">
+                    Assigned to {searchResult.sprints.length} sprint(s):
+                  </h5>
+                  <div className="space-y-2">
+                    {searchResult.sprints.map((sprint: any) => (
+                      <div key={sprint.id} className="p-3 bg-green-50 border border-green-200 rounded-md">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-medium text-green-900">{sprint.name}</span>
+                            <span className="text-green-700 text-sm ml-2">
+                              ({format(new Date(sprint.startDate), 'MMM dd')} - {format(new Date(sprint.endDate), 'MMM dd, yyyy')})
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              // Scroll to the sprint
+                              const sprintElement = document.querySelector(`[data-sprint-id="${sprint.id}"]`);
+                              if (sprintElement) {
+                                sprintElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }
+                            }}
+                            className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center gap-1"
+                          >
+                            <Target className="h-3 w-3" />
+                            Go to Sprint
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                  <div className="flex items-center gap-2 text-yellow-800">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="font-medium">Not Assigned</span>
+                  </div>
+                  <p className="text-yellow-700 text-sm mt-1">
+                    This ticket is not currently assigned to any sprint.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Velocity Insights Panel */}
       {showVelocityInsights && (() => {
@@ -2674,7 +2960,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           </div>
                         ) : (
                           assignedItems.map(item => (
-                            <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
+                            <div key={item.id} className={`flex justify-between items-center p-2 rounded text-sm ${
+                              highlightedTicket && item.jiraId === highlightedTicket 
+                                ? 'bg-yellow-100 border-2 border-yellow-400 shadow-lg' 
+                                : 'bg-blue-50'
+                            }`}>
                               <div className="flex items-center gap-2">
                                 <div>
                                   {item.jiraId ? (
