@@ -6,6 +6,7 @@ import { calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkI
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
+import { getWorkItemColor, getEpicTitle, groupWorkItemsByEpic, DEFAULT_WORK_ITEM_COLOR } from '../utils/epicColors';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
@@ -2388,7 +2389,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             e.stopPropagation();
                             return false;
                           }}
-                                                  className="p-4 border border-amber-300 rounded-lg hover:shadow-md hover:border-amber-400 transition-all duration-200 bg-amber-50 select-none cursor-grab active:cursor-grabbing"
+                                                  className={`p-4 border rounded-lg hover:shadow-md transition-all duration-200 select-none cursor-grab active:cursor-grabbing ${
+                            (() => {
+                              const itemColor = getWorkItemColor(item);
+                              return `${itemColor.background} ${itemColor.border} hover:border-opacity-80`;
+                            })()
+                          }`}
                                                       style={{ 
                             userSelect: 'none',
                             cursor: 'grab',
@@ -2404,7 +2410,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             transition: 'all 0.2s ease'
                           }}
                       >
-                        <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
+                        <div className="space-y-1">
+                          {/* Epic label if item belongs to an epic */}
+                          {item.epicId && (
+                            <div className={`text-xs font-medium ${getWorkItemColor(item).label} px-2 py-0.5 rounded inline-block`}>
+                              📋 {getEpicTitle(item.epicId, data.workItems)}
+                            </div>
+                          )}
+                          <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
+                        </div>
                         <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                           <div className="flex items-center gap-2">
                             <span>{item.estimateStoryPoints} pts</span>
@@ -2457,9 +2471,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       return (
                         <div
                           key={item.id}
-                          className="p-4 border rounded-lg bg-amber-50 border-amber-200 hover:border-amber-300 hover:shadow-sm transition-all duration-200"
+                          className={`p-4 border rounded-lg hover:shadow-sm transition-all duration-200 ${
+                            (() => {
+                              const itemColor = getWorkItemColor(item);
+                              return `${itemColor.background} ${itemColor.border} hover:border-opacity-80`;
+                            })()
+                          }`}
                         >
-                          <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
+                          <div className="space-y-1">
+                            {/* Epic label if item belongs to an epic */}
+                            {item.epicId && (
+                              <div className={`text-xs font-medium ${getWorkItemColor(item).label} px-2 py-0.5 rounded inline-block`}>
+                                📋 {getEpicTitle(item.epicId, data.workItems)}
+                              </div>
+                            )}
+                            <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
+                          </div>
                           <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                             <div className="flex items-center gap-2">
                               <span>{item.estimateStoryPoints} pts</span>
@@ -2495,23 +2522,25 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               )}
 
               {/* Epic Work Items - Display as top-level items */}
-                    {unassignedEpicWorkItems.map(epic => (
-                      <div key={epic.id} className="border rounded-lg bg-indigo-50 border-indigo-200">
+                    {unassignedEpicWorkItems.map(epic => {
+                      const epicColor = getWorkItemColor(epic);
+                      return (
+                      <div key={epic.id} className={`border rounded-lg ${epicColor.background} ${epicColor.border}`}>
                         {/* Epic Header */}
                         <div 
-                          className="p-3 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
+                          className={`p-3 cursor-pointer flex items-center gap-2 transition-colors hover:opacity-80`}
                           onClick={() => {
                             console.log(`🖱️ EPIC HEADER CLICKED: ${epic.id}`);
                             toggleEpicExpansion(epic.id);
                           }}
                         >
                           {expandedEpics.has(epic.id) ? (
-                            <ChevronDown className="h-4 w-4 text-indigo-600" />
+                            <ChevronDown className={`h-4 w-4 ${epicColor.text}`} />
                           ) : (
-                            <ChevronRight className="h-4 w-4 text-indigo-600" />
+                            <ChevronRight className={`h-4 w-4 ${epicColor.text}`} />
                           )}
                           <div className="flex-1">
-                            <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
+                            <div className={`font-medium text-sm ${epicColor.text} flex items-center gap-2`}>
                               📋 {epic.jiraId ? (
                                 <>
                                   <a 
@@ -2737,7 +2766,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
 
               {/* Information about imported epics */}
               {data.epics.length > 0 && (
@@ -2959,79 +2989,116 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             Drop work items here or click Auto-Assign
                           </div>
                         ) : (
-                          assignedItems.map(item => (
-                            <div key={item.id} className={`flex justify-between items-center p-2 rounded text-sm ${
-                              highlightedTicket && item.jiraId === highlightedTicket 
-                                ? 'bg-yellow-100 border-2 border-yellow-400 shadow-lg' 
-                                : 'bg-blue-50'
-                            }`}>
-                              <div className="flex items-center gap-2">
-                                <div>
-                                  {item.jiraId ? (
-                                    <span className="font-medium">
-                                      <a 
-                                        href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {item.jiraId}
-                                        <ExternalLink className="h-3 w-3" />
-                                      </a>
-                                      <span className="ml-1">- {item.title}</span>
-                                    </span>
-                                  ) : (
-                                    <span className="font-medium">{item.title}</span>
-                                  )}
-                                  <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                                  {/* Always show current Jira status */}
-                                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-                                    item.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                    'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
-                                  </span>
-                                </div>
-                                {/* Show priority for epic items or epic children */}
-                                {(item.isEpic || item.epicId) && (
-                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
-                                    item.isEpic 
-                                      ? (item.priority || 'Medium')
-                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                  )}`}>
-                                    {item.isEpic 
-                                      ? (item.priority || 'Medium')
-                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                    }
-                                  </span>
-                                )}
+                          (() => {
+                            // Group work items by epic
+                            const groupedItems = groupWorkItemsByEpic(assignedItems);
+                            
+                            return (
+                              <div className="space-y-2">
+                                {Object.entries(groupedItems).map(([epicKey, items]) => {
+                                  const isNoEpicGroup = epicKey === '__no_epic__';
+                                  const epicColor = isNoEpicGroup ? DEFAULT_WORK_ITEM_COLOR : getWorkItemColor({ epicId: epicKey });
+                                  
+                                  return (
+                                    <div key={epicKey} className="space-y-1">
+                                      {/* Epic header (only for items that belong to an epic) */}
+                                      {!isNoEpicGroup && (
+                                        <div className={`px-2 py-1 rounded-t text-xs font-medium ${epicColor.label} border-l-4 ${epicColor.border}`}>
+                                          📋 {getEpicTitle(epicKey, data.workItems)} ({items.length} item{items.length !== 1 ? 's' : ''})
+                                        </div>
+                                      )}
+                                      
+                                      {/* Work items in this epic group */}
+                                      {items.map(item => {
+                                        const itemColor = getWorkItemColor(item);
+                                        
+                                        return (
+                                          <div 
+                                            key={item.id} 
+                                            className={`flex justify-between items-center p-2 rounded text-sm border ${
+                                              highlightedTicket && item.jiraId === highlightedTicket 
+                                                ? 'bg-yellow-100 border-2 border-yellow-400 shadow-lg' 
+                                                : `${itemColor.background} ${itemColor.border}`
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <div>
+                                                {item.jiraId ? (
+                                                  <span className="font-medium">
+                                                    <a 
+                                                      href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className={`hover:underline inline-flex items-center gap-1 ${
+                                                        highlightedTicket && item.jiraId === highlightedTicket 
+                                                          ? 'text-yellow-800' 
+                                                          : itemColor.text
+                                                      }`}
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      {item.jiraId}
+                                                      <ExternalLink className="h-3 w-3" />
+                                                    </a>
+                                                    <span className="ml-1 text-gray-700">- {item.title}</span>
+                                                  </span>
+                                                ) : (
+                                                  <span className={`font-medium ${itemColor.text}`}>{item.title}</span>
+                                                )}
+                                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                                {/* Always show current Jira status */}
+                                                <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                                                  item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                                  item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                                  'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                  {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                                </span>
+                                              </div>
+                                              {/* Show priority for epic items or epic children */}
+                                              {(item.isEpic || item.epicId) && (
+                                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
+                                                  item.isEpic 
+                                                    ? (item.priority || 'Medium')
+                                                    : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                                )}`}>
+                                                  {item.isEpic 
+                                                    ? (item.priority || 'Medium')
+                                                    : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                                  }
+                                                </span>
+                                              )}
+                                            </div>
+                                            <button
+                                              onClick={(e) => {
+                                                console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                removeItemFromSprint(item.id, sprint.id);
+                                              }}
+                                              onPointerDown={(e) => {
+                                                // Prevent any pointer events from triggering drag
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                              }}
+                                              onPointerUp={(e) => {
+                                                // Prevent any pointer events from triggering drag
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                              }}
+                                              className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                              style={{ pointerEvents: 'auto', zIndex: 1000 }}
+                                            >
+                                              Remove
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  removeItemFromSprint(item.id, sprint.id);
-                                }}
-                                onPointerDown={(e) => {
-                                  // Prevent any pointer events from triggering drag
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                onPointerUp={(e) => {
-                                  // Prevent any pointer events from triggering drag
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                                style={{ pointerEvents: 'auto', zIndex: 1000 }}
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          ))
+                            );
+                          })()
                         )}
                       </div>
 
