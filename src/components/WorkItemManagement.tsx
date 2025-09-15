@@ -778,7 +778,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                   <div className="flex items-center justify-between mt-3">
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span className="font-medium">
-                        {item.estimateStoryPoints} story points
+                        {item.estimateStoryPoints ?? 'not set'} story points
                       </span>
                       <span>
                         Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}

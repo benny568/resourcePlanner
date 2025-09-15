@@ -164,3 +164,4 @@ export function groupWorkItemsByEpic(workItems: any[]): { [epicId: string]: any[
 export function clearEpicColorCache(): void {
   epicColorCache.clear();
 }
+

@@ -38,7 +38,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
     workItemsAssigned: data.workItems.filter(item => item.assignedSprints.includes(sprint.id)),
     assignedPoints: data.workItems
       .filter(item => item.assignedSprints.includes(sprint.id))
-      .reduce((sum, item) => sum + item.estimateStoryPoints, 0)
+      .reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)
   }));
 
   // Get holidays for current month
@@ -189,7 +189,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
                         )}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">{item.estimateStoryPoints}pts</span>
+                        <span className="font-medium">{item.estimateStoryPoints ?? 'not set'}pts</span>
                         <span className={`px-2 py-1 rounded-full text-xs ${
                           item.status === 'Completed' ? 'bg-green-100 text-green-800' :
                           item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
@@ -325,7 +325,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ data }) => {
                 </span>
                 <div className="flex items-center gap-2 text-red-600">
                   <span>Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}</span>
-                  <span className="font-medium">{item.estimateStoryPoints}pts</span>
+                  <span className="font-medium">{item.estimateStoryPoints ?? 'not set'}pts</span>
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     item.status === 'Completed' ? 'bg-green-100 text-green-800' :
                     item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :

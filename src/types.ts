@@ -21,7 +21,7 @@ export interface WorkItem {
   jiraId?: string; // Optional Jira ticket ID (e.g., REF-1234)
   title: string;
   description: string;
-  estimateStoryPoints: number;
+  estimateStoryPoints: number | null;
   requiredCompletionDate: Date;
   requiredSkills: Skill[]; // skills needed to work on this item
   dependencies: string[]; // IDs of work items that must be completed first

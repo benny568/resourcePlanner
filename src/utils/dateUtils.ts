@@ -21,6 +21,55 @@ const getWorkingDaysInSprint = (startDate: Date, endDate: Date): number => {
   return days.filter(day => !isWeekend(day)).length;
 };
 
+// Calculate total available development days for a sprint
+export const calculateAvailableDevelopmentDays = (
+  sprint: Sprint,
+  teamMembers: TeamMember[],
+  publicHolidays: PublicHoliday[]
+): number => {
+  // Step 1: Calculate base working days (excluding weekends)
+  const workingDaysInSprint = getWorkingDaysInSprint(sprint.startDate, sprint.endDate);
+  
+  // Step 2: Calculate total team member capacity as person-days
+  const totalTeamCapacity = teamMembers.reduce((total, member) => total + (member.capacity / 100), 0);
+  const basePersonDays = workingDaysInSprint * totalTeamCapacity;
+  
+  // Step 3: Subtract public holidays impact
+  const holidaysInSprint = publicHolidays.filter(holiday =>
+    isWithinInterval(holiday.date, { start: sprint.startDate, end: sprint.endDate })
+  );
+  
+  // Each public holiday removes 1 day for all team members
+  const publicHolidayDaysLost = holidaysInSprint.length * totalTeamCapacity;
+  
+  // Step 4: Subtract personal holidays impact
+  let personalHolidayDaysLost = 0;
+  
+  teamMembers.forEach(member => {
+    const memberHolidaysInSprint = member.personalHolidays.filter(holiday =>
+      isWithinInterval(sprint.startDate, { start: holiday.startDate, end: holiday.endDate }) ||
+      isWithinInterval(sprint.endDate, { start: holiday.startDate, end: holiday.endDate }) ||
+      isWithinInterval(holiday.startDate, { start: sprint.startDate, end: sprint.endDate })
+    );
+    
+    memberHolidaysInSprint.forEach(holiday => {
+      const overlapStart = holiday.startDate > sprint.startDate ? holiday.startDate : sprint.startDate;
+      const overlapEnd = holiday.endDate < sprint.endDate ? holiday.endDate : sprint.endDate;
+      
+      // Calculate working days lost for this member (excluding weekends)
+      const holidayWorkingDays = getWorkingDaysInSprint(overlapStart, overlapEnd);
+      const memberContribution = member.capacity / 100;
+      
+      personalHolidayDaysLost += holidayWorkingDays * memberContribution;
+    });
+  });
+  
+  // Step 5: Calculate final available development days
+  const availableDays = Math.max(0, basePersonDays - publicHolidayDaysLost - personalHolidayDaysLost);
+  
+  return Math.round(availableDays * 10) / 10; // Round to 1 decimal place
+};
+
 // Quarter utility functions
 export const getQuarterInfo = (date: Date) => {
   const quarter = getQuarter(date);

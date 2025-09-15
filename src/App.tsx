@@ -329,6 +329,26 @@ function App() {
         console.log('✅ Sprint config saved to backend');
       } catch (error) {
         console.error('❌ Failed to save sprint config to backend:', error);
+        
+        // Improved error handling to prevent weird error messages
+        let errorMessage = 'Unknown error occurred';
+        if (error instanceof Error) {
+          errorMessage = error.message;
+        } else if (error && typeof error === 'object' && 'message' in error) {
+          errorMessage = String(error.message);
+        } else if (typeof error === 'string') {
+          errorMessage = error;
+        }
+        
+        console.error('❌ Detailed error information:', {
+          error,
+          errorType: typeof error,
+          errorConstructor: error?.constructor?.name,
+          errorMessage
+        });
+        
+        // Re-throw the error with a clean message for upstream handling
+        throw new Error(`Failed to save sprint configuration to database: ${errorMessage}`);
       }
     }
 

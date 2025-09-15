@@ -1,12 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
-import { Calculator, Target, AlertTriangle, CheckCircle, RotateCcw, ChevronDown, ChevronRight, Save, X, ExternalLink, BarChart3, AlertCircle, Search } from 'lucide-react';
+import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
+import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
-import { getWorkItemColor, getEpicTitle, groupWorkItemsByEpic, DEFAULT_WORK_ITEM_COLOR } from '../utils/epicColors';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
@@ -17,11 +16,11 @@ interface SprintPlanningProps {
 // Helper function to get sprint name from assigned sprint IDs
 const getSprintName = (assignedSprints: string[], allSprints: Sprint[]): string => {
   if (assignedSprints.length === 0) return 'ASSIGNED';
-  
+
   // Get the first assigned sprint (assuming work items are typically assigned to one sprint)
   const sprintId = assignedSprints[0];
   const sprint = allSprints.find(s => s.id === sprintId);
-  
+
   return sprint ? sprint.name : 'ASSIGNED';
 };
 
@@ -35,16 +34,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     sprints: data.sprints.length,
     epics: data.epics.length
   });
-  
+
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
-  const [dragStart, setDragStart] = useState<{x: number, y: number, itemId: string} | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number, y: number, itemId: string } | null>(null);
   const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
   // Initialize all sprints as collapsed by default
   const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
   const [showBottleneckAnalysis, setShowBottleneckAnalysis] = useState<boolean>(false);
-  
+
   // Auto-assign preview state
   const [autoAssignPreview, setAutoAssignPreview] = useState<{
     workItems: WorkItem[];
@@ -53,52 +52,42 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     possibleEndDate?: Date | null;
     timestamp?: number;
   } | null>(null);
-  
+
   // Velocity insights state
   const [showVelocityInsights, setShowVelocityInsights] = useState(false);
-  
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResult, setSearchResult] = useState<{
-    workItem: any;
-    sprints: any[];
-  } | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [highlightedTicket, setHighlightedTicket] = useState<string | null>(null);
-  
+
   // Helper function to create new sprints based on sprint configuration
   const createNewSprints = (fromExistingSprints: Sprint[], sprintConfig: any, count: number = 1): Sprint[] => {
     const newSprints: Sprint[] = [];
     const lastSprint = fromExistingSprints[fromExistingSprints.length - 1];
-    
+
     if (!lastSprint) {
       console.error('❌ Cannot create new sprints: no existing sprints found');
       return [];
     }
-    
+
     // Start the new sprint(s) after the last existing sprint
     let currentSprintStart = new Date(lastSprint.endDate);
     currentSprintStart.setDate(currentSprintStart.getDate() + 1); // Next day after last sprint ends
-    
+
     for (let i = 0; i < count; i++) {
       const sprintEnd = new Date(currentSprintStart);
       sprintEnd.setDate(sprintEnd.getDate() + sprintConfig.sprintDurationDays - 1);
-      
+
       // Calculate sprint number by counting existing sprints plus new ones
       const totalSprintCount = fromExistingSprints.length + newSprints.length + 1;
-      
+
       // Get quarter info for naming
       const quarterInfo = getQuarterInfo(currentSprintStart);
-      
+
       // Count sprints in this quarter to determine sprint number within quarter
       const sprintsInQuarter = [...fromExistingSprints, ...newSprints].filter(s => {
         const sQuarter = getQuarterInfo(s.startDate);
         return sQuarter.quarterString === quarterInfo.quarterString;
       });
-      
+
       const quarterSprintNumber = sprintsInQuarter.length + 1;
-      
+
       const newSprint: Sprint = {
         id: `sprint-${new Date().getFullYear()}-${totalSprintCount}`,
         name: `${quarterInfo.quarterString} Sprint ${quarterSprintNumber}`,
@@ -107,29 +96,29 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         plannedVelocity: sprintConfig.defaultVelocity,
         workItems: []
       };
-      
+
       newSprints.push(newSprint);
       console.log(`➕ Created new sprint: ${newSprint.name} (${format(newSprint.startDate, 'MMM dd')} - ${format(newSprint.endDate, 'MMM dd, yyyy')})`);
-      
+
       // Move to next sprint start date
       currentSprintStart = new Date(sprintEnd);
       currentSprintStart.setDate(currentSprintStart.getDate() + 1);
     }
-    
+
     return newSprints;
   };
-  
+
   // Helper function to get quarter info (needed for sprint naming)
   const getQuarterInfo = (date: Date) => {
     const month = date.getMonth() + 1; // getMonth() returns 0-11
     const year = date.getFullYear();
-    
+
     let quarter: number;
     if (month <= 3) quarter = 1;
     else if (month <= 6) quarter = 2;
     else if (month <= 9) quarter = 3;
     else quarter = 4;
-    
+
     return {
       quarter,
       year,
@@ -137,48 +126,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     };
   };
 
-  // Search function
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      setSearchError('Please enter a ticket ID');
-      return;
-    }
-
-    setSearchLoading(true);
-    setSearchError(null);
-    setSearchResult(null);
-    setHighlightedTicket(null);
-
-    try {
-      const result = await workItemsApi.searchByTicketId(searchQuery.trim());
-      
-      if (result) {
-        setSearchResult(result);
-        setHighlightedTicket(result.workItem.jiraId);
-        // Auto-expand sprints that contain the ticket
-        if (result.sprints.length > 0) {
-          const sprintIds = new Set(result.sprints.map((s: any) => s.id));
-          setExpandedSprints(prev => new Set([...prev, ...sprintIds]));
-        }
-      } else {
-        setSearchError(`No work item found with ticket ID: ${searchQuery}`);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-      setSearchError(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setSearchLoading(false);
-    }
-  };
-
-  // Clear search results
-  const clearSearch = () => {
-    setSearchQuery('');
-    setSearchResult(null);
-    setSearchError(null);
-    setHighlightedTicket(null);
-  };
-  
   // DEBUG: Track autoAssignPreview state changes
   React.useEffect(() => {
     console.log('🔄 autoAssignPreview STATE CHANGED:', {
@@ -211,18 +158,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Check if we should start dragging based on mouse movement
       if (dragStart && !draggedItem) {
         const distance = Math.sqrt(
-          Math.pow(e.clientX - dragStart.x, 2) + 
+          Math.pow(e.clientX - dragStart.x, 2) +
           Math.pow(e.clientY - dragStart.y, 2)
         );
-        
+
         console.log(`↔️ POINTER MOVE: Distance ${distance.toFixed(1)}px from start`);
-        
+
         // Start drag when mouse moves more than 5 pixels
         if (distance > 5) {
           console.log(`🎯 DRAGGING: Starting drag for item "${dragStart.itemId}"`);
           setDraggedItem(dragStart.itemId);
           setHideDropZones(false);
-          
+
           // Apply visual effects to the dragged item
           const draggedElement = document.querySelector(`[data-item-id="${dragStart.itemId}"]`) as HTMLElement;
           if (draggedElement) {
@@ -236,14 +183,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     const handleGlobalPointerUp = () => {
       console.log(`🔼 POINTER UP: dragStart=${!!dragStart}, draggedItem=${!!draggedItem}`);
-      
+
       // Always cleanup drag start state
       setDragStart(null);
-      
+
       // Only cleanup if no specific handler already handled the drop
       if (draggedItem && !dropHandledRef.current) {
         console.log('🔄 Global pointer up - resetting drag state');
-        
+
         // Remove blue border from ALL sprint containers immediately
         document.querySelectorAll('[data-sprint-id]').forEach((el) => {
           const htmlEl = el as HTMLElement;
@@ -252,10 +199,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           htmlEl.style.minHeight = 'auto';
           htmlEl.style.cursor = 'default';
         });
-        
+
         setDraggedItem(null);
         setHideDropZones(false);
-        
+
         // Reset any stuck visual states
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
@@ -271,7 +218,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Only cancel drag when actually leaving the browser window
       if (draggedItem) {
         console.log('🔄 Window left: resetting drag state');
-        
+
         // Remove blue border from ALL sprint containers immediately
         document.querySelectorAll('[data-sprint-id]').forEach((el) => {
           const htmlEl = el as HTMLElement;
@@ -280,11 +227,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           htmlEl.style.minHeight = 'auto';
           htmlEl.style.cursor = 'default';
         });
-        
+
         setDraggedItem(null);
         setDragStart(null);
         setHideDropZones(false);
-        
+
         document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
           el.style.opacity = '1';
           el.style.transform = 'scale(1)';
@@ -297,7 +244,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     document.addEventListener('pointermove', handleGlobalPointerMove);
     document.addEventListener('pointerup', handleGlobalPointerUp);
     window.addEventListener('blur', handleWindowLeave); // Window loses focus
-    
+
     return () => {
       document.removeEventListener('pointermove', handleGlobalPointerMove);
       document.removeEventListener('pointerup', handleGlobalPointerUp);
@@ -337,7 +284,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // CRITICAL: Once preview is active, NEVER switch back to data.* until preview is cleared
   const currentWorkItems = autoAssignPreview?.isPreviewActive ? autoAssignPreview.workItems : data.workItems;
   const currentSprints = autoAssignPreview?.isPreviewActive ? autoAssignPreview.sprints : data.sprints;
-  
+
   // DEBUG: Ensure data source is stable in preview mode
   React.useEffect(() => {
     if (autoAssignPreview?.isPreviewActive) {
@@ -346,35 +293,35 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.log('  - Preview sprints with assignments:', autoAssignPreview.sprints.filter(s => s.workItems.length > 0).length);
     }
   }, [autoAssignPreview?.isPreviewActive, data.workItems.length, data.sprints.length]);
-  
+
   // DEBUG: Log data source and key metrics
   React.useEffect(() => {
     console.log('🔍 DATA SOURCE UPDATE:');
     console.log('  - Preview active:', autoAssignPreview?.isPreviewActive);
     console.log('  - currentSprints length:', currentSprints.length);
-    console.log('  - First 3 sprints workItems:', currentSprints.slice(0, 3).map(s => ({ 
-      id: s.id, 
-      name: s.name, 
+    console.log('  - First 3 sprints workItems:', currentSprints.slice(0, 3).map(s => ({
+      id: s.id,
+      name: s.name,
       workItemsCount: s.workItems.length,
       workItemsArray: s.workItems,
       clearTimestamp: (s as any)._clearTimestamp
     })));
-    
+
     // Log total assigned items across all sprints
     const totalAssignedItems = currentSprints.reduce((sum, s) => sum + s.workItems.length, 0);
     console.log('  - Total assigned items across all sprints:', totalAssignedItems);
   }, [autoAssignPreview?.isPreviewActive, currentSprints]);
-  
+
 
 
   // Get unassigned work items (exclude epic children - they'll be shown under parent epics)  
-  const unassignedItems = currentWorkItems.filter(item => 
-    item.assignedSprints.length === 0 && 
+  const unassignedItems = currentWorkItems.filter(item =>
+    item.assignedSprints.length === 0 &&
     item.status !== 'Completed' &&
     !item.isEpic && // Not an epic work item
     !item.epicId   // Not an epic child (they'll be grouped under parent epics)
   );
-  
+
   // TEMP DEBUG: Check what's in unassigned items
   console.log('📋 Sample unassigned items:', unassignedItems.slice(0, 5).map(item => ({
     id: item.id,
@@ -390,11 +337,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const readyItems = unassignedItems.filter(item => !blockedItems.includes(item));
 
   // Get all epic work items that are not completed (work items with isEpic: true)
-  const unassignedEpicWorkItems = currentWorkItems.filter(item => 
-    item.isEpic && 
+  const unassignedEpicWorkItems = currentWorkItems.filter(item =>
+    item.isEpic &&
     item.status !== 'Completed' &&
     (item.assignedSprints.length === 0 || // Epic itself is unassigned OR
-     (item.children && item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed'))) // Has unassigned children
+      (item.children && item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed'))) // Has unassigned children
   );
 
 
@@ -408,7 +355,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   }, [readyItems, unassignedEpicWorkItems]);
 
   // Get active sprints (not completed by user)
-  const activeSprints = currentSprints.filter(sprint => 
+  const activeSprints = currentSprints.filter(sprint =>
     sprint.status !== 'completed'
   ).slice(0, 12); // Show next 12 sprints to better showcase quarterly grouping
 
@@ -424,7 +371,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.error('  - Duplicate IDs:', sprintIds.filter((id, index) => sprintIds.indexOf(id) !== index));
       console.error('  - Full sprint list:', activeSprints.map(s => ({ id: s.id, name: s.name })));
     }
-    
+
     // DEDUPLICATION: Remove duplicate sprints by name (keep the first occurrence)
     const sprintsByName = new Map();
     const deduplicatedSprints = activeSprints.filter(sprint => {
@@ -436,11 +383,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         return true; // Keep this sprint
       }
     });
-    
+
     if (deduplicatedSprints.length !== activeSprints.length) {
       console.log(`✅ Deduplication complete: ${activeSprints.length} → ${deduplicatedSprints.length} sprints`);
     }
-    
+
     return groupSprintsByQuarter(deduplicatedSprints);
   }, [activeSprints]);
 
@@ -448,22 +395,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const sprintData = useMemo(() => {
     // Get deduplicated sprints from quarterGroups
     const deduplicatedSprints = quarterGroups.flatMap(qg => qg.sprints);
-    
+
     // CRITICAL: Don't run expensive calculations in preview mode with cleared data
     if (autoAssignPreview?.isPreviewActive) {
       console.log('🔒 PREVIEW MODE: Skipping expensive sprint calculations');
       return deduplicatedSprints.map(sprint => {
-        const assignedItems = currentWorkItems.filter(item => 
+        const assignedItems = currentWorkItems.filter(item =>
           item.assignedSprints.includes(sprint.id)
         );
         // Calculate basic metrics for preview mode (no expensive calculations)
         const totalPoints = assignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
-        const frontendPoints = assignedItems.filter(item => 
-          (item.description && item.description.toLowerCase().includes('fe')) || 
+        const frontendPoints = assignedItems.filter(item =>
+          (item.description && item.description.toLowerCase().includes('fe')) ||
           (!item.description?.toLowerCase().includes('be') && Math.random() > 0.5) // Default assumption
         ).reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
         const backendPoints = totalPoints - frontendPoints;
-        
+
         return {
           sprint,
           assignedItems,
@@ -472,7 +419,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           capacity: 67,                 // JSX expects capacity, not totalCapacity
           utilization: totalPoints > 0 ? (totalPoints / 67) * 100 : 0,
           availableCapacity: Math.max(0, 67 - totalPoints),
-          
+
           // Skill-specific properties expected by JSX
           frontendPoints,               // JSX expects frontendPoints
           backendPoints,                // JSX expects backendPoints  
@@ -480,14 +427,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           backendUtilization: backendPoints > 0 ? (backendPoints / 27) * 100 : 0,
           availableFrontendCapacity: Math.max(0, 40 - frontendPoints),
           availableBackendCapacity: Math.max(0, 27 - backendPoints),
-          
+
           // SkillCapacities object expected by JSX
           skillCapacities: {
             frontend: 40,
             backend: 27,
             total: 67
           },
-          
+
           // Additional compatibility properties  
           totalPoints,
           frontendCapacity: 40,
@@ -505,15 +452,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         };
       });
     }
-    
+
     return deduplicatedSprints.map(sprint => {
       // Get assigned top-level work items
-      const assignedItems = currentWorkItems.filter(item => 
+      const assignedItems = currentWorkItems.filter(item =>
         item.assignedSprints.includes(sprint.id)
       );
-      
 
-      
+
+
       // Get assigned epic children
       const assignedEpicChildren: WorkItem[] = [];
       currentWorkItems.filter(item => item.isEpic && item.children).forEach(epic => {
@@ -523,36 +470,36 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           }
         });
       });
-      
+
       // NOTE: Epic children from data.epics are NOT included until manually converted to work items
       // This prevents epic children from appearing as if they're automatically work items
-      
+
       // Combine all assigned items and deduplicate by ID
       const combinedItems = [...assignedItems, ...assignedEpicChildren];
-      const allAssignedItems = combinedItems.filter((item, index, array) => 
+      const allAssignedItems = combinedItems.filter((item, index, array) =>
         array.findIndex(i => i.id === item.id) === index
       );
-      
+
       // Debug: Log if duplicates were found
       if (combinedItems.length > allAssignedItems.length) {
         console.log(`🔍 REMOVED ${combinedItems.length - allAssignedItems.length} duplicate(s) in sprint "${sprint.name}"`);
       }
-      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
-      
+      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+
       // Calculate skill-specific capacities
       const skillCapacities = calculateSprintSkillCapacities(sprint, data.teamMembers, data.publicHolidays);
       const capacity = skillCapacities.total;
-      
+
       // Calculate skill-specific assignments
       const frontendItems = allAssignedItems.filter(item => item.requiredSkills.includes('frontend'));
       const backendItems = allAssignedItems.filter(item => item.requiredSkills.includes('backend'));
-      const frontendPoints = frontendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
-      const backendPoints = backendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
-      
+      const frontendPoints = frontendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+      const backendPoints = backendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+
       const utilization = capacity > 0 ? (assignedPoints / capacity) * 100 : 0;
       const frontendUtilization = skillCapacities.frontend > 0 ? (frontendPoints / skillCapacities.frontend) * 100 : 0;
       const backendUtilization = skillCapacities.backend > 0 ? (backendPoints / skillCapacities.backend) * 100 : 0;
-      
+
       return {
         sprint,
         assignedItems: allAssignedItems,
@@ -574,23 +521,23 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Comprehensive bottleneck analysis for UI display
   const analyzeCapacityBottlenecks = () => {
     if (sprintData.length === 0) return null;
-    
+
     const sampleSprint = sprintData[0];
     const frontendCapacity = sampleSprint.skillCapacities.frontend;
     const backendCapacity = sampleSprint.skillCapacities.backend;
     const totalCapacity = sampleSprint.capacity;
-    
+
     const frontendRatio = frontendCapacity / totalCapacity;
     const backendRatio = backendCapacity / totalCapacity;
-    
+
     // Analyze work items skill requirements
-    const workItemsRequiringFrontend = data.workItems.filter(item => 
+    const workItemsRequiringFrontend = data.workItems.filter(item =>
       item.requiredSkills.includes('frontend')).length;
-    const workItemsRequiringBackend = data.workItems.filter(item => 
+    const workItemsRequiringBackend = data.workItems.filter(item =>
       item.requiredSkills.includes('backend')).length;
-    const workItemsRequiringBoth = data.workItems.filter(item => 
+    const workItemsRequiringBoth = data.workItems.filter(item =>
       item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')).length;
-    
+
     // Calculate current utilization across all sprints
     console.log(`🔍 Analyzing ${sprintData.length} sprints for capacity bottlenecks`);
     let totalFrontendAssigned = 0;
@@ -599,40 +546,40 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     let totalCapacityAvailable = 0;
     let totalFrontendCapacityAvailable = 0;
     let totalBackendCapacityAvailable = 0;
-    
+
     sprintData.forEach(sprintInfo => {
       const assignedItems = sprintInfo.assignedItems;
-      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}`);
-      
+      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}`);
+
       assignedItems.forEach(item => {
         // For overall utilization, count each item only once
-        totalOverallAssigned += item.estimateStoryPoints;
-        
+        totalOverallAssigned += (item.estimateStoryPoints || 0);
+
         // For skill-specific utilization, allocate points based on required skills
         if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
           // Split points between frontend and backend for items requiring both
-          totalFrontendAssigned += item.estimateStoryPoints / 2;
-          totalBackendAssigned += item.estimateStoryPoints / 2;
+          totalFrontendAssigned += (item.estimateStoryPoints || 0) / 2;
+          totalBackendAssigned += (item.estimateStoryPoints || 0) / 2;
         } else if (item.requiredSkills.includes('frontend')) {
           // Frontend-only items
-          totalFrontendAssigned += item.estimateStoryPoints;
+          totalFrontendAssigned += (item.estimateStoryPoints || 0);
         } else if (item.requiredSkills.includes('backend')) {
           // Backend-only items
-          totalBackendAssigned += item.estimateStoryPoints;
+          totalBackendAssigned += (item.estimateStoryPoints || 0);
         }
       });
       totalCapacityAvailable += sprintInfo.capacity;
       totalFrontendCapacityAvailable += sprintInfo.skillCapacities?.frontend || 0;
       totalBackendCapacityAvailable += sprintInfo.skillCapacities?.backend || 0;
     });
-    
-    const frontendUtilization = totalFrontendCapacityAvailable > 0 ? 
+
+    const frontendUtilization = totalFrontendCapacityAvailable > 0 ?
       (totalFrontendAssigned / totalFrontendCapacityAvailable) * 100 : 0;
-    const backendUtilization = totalBackendCapacityAvailable > 0 ? 
+    const backendUtilization = totalBackendCapacityAvailable > 0 ?
       (totalBackendAssigned / totalBackendCapacityAvailable) * 100 : 0;
-    const overallUtilization = totalCapacityAvailable > 0 ? 
+    const overallUtilization = totalCapacityAvailable > 0 ?
       (totalOverallAssigned / totalCapacityAvailable) * 100 : 0;
-    
+
     // Debug logging for utilization calculation
     console.log('🔍 UTILIZATION DEBUG:', {
       totalFrontendAssigned,
@@ -645,14 +592,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       backendUtilization: backendUtilization.toFixed(1) + '%',
       overallUtilization: overallUtilization.toFixed(1) + '%'
     });
-    
+
     // Determine bottleneck
     const isBottleneck = frontendRatio < 0.4 || backendRatio < 0.4;
     const limitingSkill = frontendRatio < backendRatio ? 'frontend' : 'backend';
     const limitingCapacity = limitingSkill === 'frontend' ? frontendCapacity : backendCapacity;
     const limitingRatio = limitingSkill === 'frontend' ? frontendRatio : backendRatio;
     const limitingUtilization = limitingSkill === 'frontend' ? frontendUtilization : backendUtilization;
-    
+
     return {
       isBottleneck,
       limitingSkill,
@@ -683,45 +630,45 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.log('🚨 No sprint data available for bottleneck check');
       return null;
     }
-    
+
     const frontendCapacity = sampleSprint.skillCapacities.frontend;
     const backendCapacity = sampleSprint.skillCapacities.backend;
     const totalCapacity = sampleSprint.capacity;
-    
+
     console.log('🔍 BOTTLENECK CHECK:', {
       frontendCapacity,
       backendCapacity,
       totalCapacity,
       sprintName: sampleSprint.sprint.name
     });
-    
+
     const frontendRatio = frontendCapacity / totalCapacity;
     const backendRatio = backendCapacity / totalCapacity;
-    
+
     console.log('📊 CAPACITY RATIOS:', {
       frontendRatio: `${(frontendRatio * 100).toFixed(1)}%`,
       backendRatio: `${(backendRatio * 100).toFixed(1)}%`,
       frontendUnder40: frontendRatio < 0.4,
       backendUnder40: backendRatio < 0.4
     });
-    
+
     // Check for significant imbalance (one skill < 40% of total capacity)
     if (frontendRatio < 0.4 || backendRatio < 0.4) {
       const limitingSkill = frontendRatio < backendRatio ? 'frontend' : 'backend';
       const limitingCapacity = limitingSkill === 'frontend' ? frontendCapacity : backendCapacity;
       const limitingRatio = limitingSkill === 'frontend' ? frontendRatio : backendRatio;
-      
+
       const bottleneck = {
         limitingSkill,
         limitingCapacity,
         limitingRatio,
         maxUtilization: (limitingCapacity / totalCapacity) * 100
       };
-      
+
       console.log('⚠️ BOTTLENECK DETECTED:', bottleneck);
       return bottleneck;
     }
-    
+
     console.log('✅ No bottleneck detected - capacities are balanced');
     return null;
   };
@@ -748,14 +695,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         `3. Review work item skill classifications\n\n` +
         `Continue with auto-assign anyway?`
       );
-      
+
       if (!proceed) {
         return;
       }
     }
     const updatedWorkItems = [...data.workItems];
     let updatedSprints = [...data.sprints];
-    
+
     // Apply velocity-aware planning if historical data is available
     const velocityPlan = generateVelocityAwareSprintPlan(updatedSprints, updatedWorkItems, data.teamMembers);
     if (velocityPlan.velocityInsights.analysis.sprintsWithData > 0) {
@@ -763,17 +710,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.log('📈 Velocity insights:', velocityPlan.velocityInsights);
       updatedSprints = velocityPlan.updatedSprints;
     }
-    
+
     // Get all items that need assignment (including epic children)
     const allUnassignedItems = [];
-    
+
     // Add individual unassigned items
     allUnassignedItems.push(...readyItems);
-    
+
     // Add unassigned epic children from unassigned epic work items
     unassignedEpicWorkItems.forEach(epic => {
       if (epic.children) {
-        const unassignedChildren = epic.children.filter(child => 
+        const unassignedChildren = epic.children.filter(child =>
           child.assignedSprints.length === 0 && child.status !== 'Completed'
         ).map(child => {
           const inheritedChild = {
@@ -838,19 +785,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       const priorityA = getItemPriority(a);
       const priorityB = getItemPriority(b);
-      
+
       // First sort by priority
       const priorityDiff = priorityOrder[priorityA] - priorityOrder[priorityB];
       if (priorityDiff !== 0) {
         return priorityDiff;
       }
-      
+
       // Then sort by deadline (earliest first)
-      const dateA = a.requiredCompletionDate instanceof Date 
-        ? a.requiredCompletionDate 
+      const dateA = a.requiredCompletionDate instanceof Date
+        ? a.requiredCompletionDate
         : new Date(a.requiredCompletionDate);
-      const dateB = b.requiredCompletionDate instanceof Date 
-        ? b.requiredCompletionDate 
+      const dateB = b.requiredCompletionDate instanceof Date
+        ? b.requiredCompletionDate
         : new Date(b.requiredCompletionDate);
       return dateA.getTime() - dateB.getTime();
     });
@@ -858,7 +805,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     // Find first available sprint (sprint with no assignments or first empty sprint)
     let currentSprintIndex = 0;
     const existingSprints = sprintData.length > 0 ? sprintData : [];
-    
+
     // If there are existing sprints with assignments, find the first free one
     if (existingSprints.length > 0) {
       currentSprintIndex = existingSprints.findIndex(sd => sd.assignedPoints === 0);
@@ -889,7 +836,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         }
         return 'Medium'; // Default for non-epic items
       };
-      
+
       return {
         title: item.title.substring(0, 30),
         priority: getItemPriority(item),
@@ -904,43 +851,43 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         prioritySource: item.isEpic ? 'self' : ((item as any).parentEpicPriority ? 'inherited' : (item.epicId ? 'lookup' : 'default'))
       };
     }));
-    
+
     itemsToAssign.forEach((item, idx) => {
-      const itemPriority = item.isEpic ? (item.priority || 'Medium') : 
-                          (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
-      
+      const itemPriority = item.isEpic ? (item.priority || 'Medium') :
+        (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
+
       console.log(`\n🚀 [${idx + 1}/${itemsToAssign.length}] Processing: ${item.title.substring(0, 40)}...`);
       console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
-      
+
       let assigned = false;
-      
+
       // For higher priority items (Critical, High), allow more aggressive filling of earlier sprints
       // For lower priority items (Medium, Low), be more conservative and prefer later sprints
       const priorityBonus = priorityOrder[itemPriority] <= 2 ? 0.1 : 0; // Critical/High get 10% bonus capacity
       const targetUtilization = 1.0; // Fill sprints to 100% capacity
-      
+
       console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
-      
+
       // Priority-aware sprint assignment: ensure higher priority items get earlier sprint access
       const getPriorityAwareStartSprint = () => {
         const itemPriorityNum = priorityOrder[itemPriority];
-        
+
         // For Critical/High priority: can access any sprint
         if (itemPriorityNum <= 2) return currentSprintIndex;
-        
+
         // For Medium/Low priority: find first sprint without higher priority items
         for (let sprintIdx = currentSprintIndex; sprintIdx < existingSprints.length; sprintIdx++) {
           const sprintData = existingSprints[sprintIdx];
           const sprint = sprintData.sprint;
-          
+
           // Check if sprint has any work items and if any have higher priority
-          const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 && 
+          const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 &&
             sprint.workItems.some(workItem => {
-              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') : 
-                                     (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
+              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') :
+                (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
               return priorityOrder[workItemPriority] < itemPriorityNum;
             });
-          
+
           if (!hasHigherPriorityItems) {
             if (sprintIdx > currentSprintIndex) {
               console.log(`   🚫 Priority blocking: ${itemPriority} item redirected from sprint ${currentSprintIndex + 1} to sprint ${sprintIdx + 1}`);
@@ -948,35 +895,35 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             return sprintIdx;
           }
         }
-        
+
         return currentSprintIndex; // Fallback
       };
-      
+
       const startSprintIndex = getPriorityAwareStartSprint();
-      
+
       // Try to assign to existing sprints first (aiming for priority-based capacity)
       for (let i = startSprintIndex; i < existingSprints.length && !assigned; i++) {
         const sprintData = existingSprints[i];
         const sprint = sprintData.sprint;
-        
+
         console.log(`   🔍 Checking sprint ${i + 1}: ${sprint.name}`);
-        
+
         // Check if item can be assigned to this sprint
         if (!canWorkItemStartInSprint(item, sprint, updatedWorkItems, updatedSprints)) {
           console.log(`   ❌ Failed dependency check`);
           continue;
         }
-        
+
         // Check deadline constraint - sprint must end before or on the item deadline
-        const itemDeadline = item.requiredCompletionDate instanceof Date 
-          ? item.requiredCompletionDate 
+        const itemDeadline = item.requiredCompletionDate instanceof Date
+          ? item.requiredCompletionDate
           : new Date(item.requiredCompletionDate);
         if (isAfter(sprint.endDate, itemDeadline)) {
           // Sprint ends after item deadline - this sprint is too late
           console.log(`   ❌ Failed deadline check: sprint ends ${sprint.endDate} vs deadline ${itemDeadline}`);
           continue;
         }
-        
+
         // Calculate current utilization
         const currentUtilization = sprintUtilizations.get(sprint.id) || {
           totalCapacity: sprintData.capacity,
@@ -986,7 +933,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedFrontend: sprintData.frontendPoints,
           assignedBackend: sprintData.backendPoints
         };
-        
+
         console.log(`   📊 Current utilization:`, {
           totalCapacity: currentUtilization.totalCapacity,
           frontendCapacity: currentUtilization.frontendCapacity,
@@ -995,7 +942,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedFrontend: currentUtilization.assignedFrontend,
           assignedBackend: currentUtilization.assignedBackend
         });
-        
+
         // Check if adding this item would exceed priority-based capacity in any skill
         // For items requiring both skills, use a more balanced approach
         const skillCapacityCheck = (() => {
@@ -1004,11 +951,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             // This allows better utilization when one skill has more capacity
             const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
             const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-            
+
             console.log(`   🔄 Full-stack item check:`);
             console.log(`   🎨 Frontend: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
             console.log(`   ⚙️ Backend: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            
+
             // Allow assignment if the average utilization is within target
             const avgUtil = (newFrontendUtil + newBackendUtil) / 2;
             console.log(`   📊 Average utilization: ${avgUtil * 100}% (target: ${targetUtilization * 100}%)`);
@@ -1029,13 +976,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             });
           }
         })();
-        
+
         const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
         console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: ${targetUtilization * 100}%)`);
-        
+
         if (skillCapacityCheck && newTotalUtil <= targetUtilization) {
           console.log(`   ✅ ASSIGNED to ${sprint.name}!`);
-          
+
           // Assign item to this sprint
           const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
           if (itemIndex >= 0) {
@@ -1052,11 +999,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 workItems: [...updatedSprints[sprintIndex].workItems, item.id]
               };
             }
-            
+
             // Update utilization tracking
             const updatedUtil = { ...currentUtilization };
             updatedUtil.assignedTotal += item.estimateStoryPoints;
-            
+
             item.requiredSkills.forEach(skill => {
               if (skill === 'frontend') {
                 updatedUtil.assignedFrontend += item.estimateStoryPoints;
@@ -1064,7 +1011,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 updatedUtil.assignedBackend += item.estimateStoryPoints;
               }
             });
-            
+
             sprintUtilizations.set(sprint.id, updatedUtil);
             assigned = true;
             lastAssignedSprintEndDate = sprint.endDate;
@@ -1073,33 +1020,33 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > targetUtilization}`);
         }
       }
-      
+
       if (!assigned) {
         console.log(`   ⚠️ Item was NOT assigned to any existing sprint`);
       }
-      
+
       // If not assigned to existing sprints, create new sprint if needed
       if (!assigned) {
         console.log(`🔄 Item ${item.title} could not be assigned to existing sprints - creating new sprint...`);
-        
+
         // Create a new sprint to accommodate this item
         const newSprints = createNewSprints(updatedSprints, data.sprintConfig, 1);
-        
+
         if (newSprints.length > 0) {
           const newSprint = newSprints[0];
           updatedSprints.push(newSprint);
-          
+
           // Try to assign the item to the new sprint
           const skillCapacities = calculateSprintSkillCapacities(newSprint, data.teamMembers, data.publicHolidays);
-          
+
           // Check if item can be assigned to the new sprint
           const skillRequired = item.requiredSkills[0]; // Primary skill for this item
           const skillCapacityAvailable = skillCapacities[skillRequired] || 0;
-          
+
           if (item.estimateStoryPoints <= skillCapacityAvailable) {
             // Assign the item to the new sprint
             newSprint.workItems.push(item.id);
-            
+
             // Update work item to reflect sprint assignment
             const workItemIndex = updatedWorkItems.findIndex(wi => wi.id === item.id);
             if (workItemIndex !== -1) {
@@ -1108,7 +1055,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 assignedSprints: [newSprint.id]
               };
             }
-            
+
             console.log(`✅ Assigned "${item.title}" to newly created sprint "${newSprint.name}"`);
           } else {
             console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${item.estimateStoryPoints})`);
@@ -1121,7 +1068,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     // Calculate possible end date based on the last sprint with assigned work items
     let possibleEndDate: Date | null = null;
-    
+
     // Find the last sprint that has any assigned work items after auto-assignment
     for (let i = updatedSprints.length - 1; i >= 0; i--) {
       const sprint = updatedSprints[i];
@@ -1132,7 +1079,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         break;
       }
     }
-    
+
     // Fallback to today if no sprints have assignments
     if (!possibleEndDate) {
       possibleEndDate = new Date();
@@ -1151,26 +1098,26 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Save auto-assign preview to database
   const saveAutoAssignPreview = async () => {
     if (!autoAssignPreview) return;
-    
+
     try {
       console.log('💾 Saving auto-assign results to database...');
-      
+
       // Find all work items that have assignment changes in the preview
       const assignmentPromises: Promise<any>[] = [];
-      
+
       autoAssignPreview.workItems.forEach(previewItem => {
         const originalItem = data.workItems.find(item => item.id === previewItem.id);
         if (originalItem) {
           // Find new sprint assignments (sprints that exist in preview but not in original)
-          const newSprintIds = previewItem.assignedSprints.filter(sprintId => 
+          const newSprintIds = previewItem.assignedSprints.filter(sprintId =>
             !originalItem.assignedSprints.includes(sprintId)
           );
-          
+
           // Find removed sprint assignments (sprints that exist in original but not in preview)
-          const removedSprintIds = originalItem.assignedSprints.filter(sprintId => 
+          const removedSprintIds = originalItem.assignedSprints.filter(sprintId =>
             !previewItem.assignedSprints.includes(sprintId)
           );
-          
+
           // Save each new assignment to database
           newSprintIds.forEach(sprintId => {
             console.log(`💾 Adding assignment: ${previewItem.title.substring(0, 30)}... → Sprint ${sprintId}`);
@@ -1183,7 +1130,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 })
             );
           });
-          
+
           // Remove each assignment from database
           removedSprintIds.forEach(sprintId => {
             console.log(`🗑️ Removing assignment: ${previewItem.title.substring(0, 30)}... ← Sprint ${sprintId}`);
@@ -1198,17 +1145,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           });
         }
       });
-      
+
       // Wait for all database saves to complete
       await Promise.all(assignmentPromises);
       console.log(`✅ All ${assignmentPromises.length} assignments saved to database`);
-      
+
       // Update local state after successful database saves
       onUpdateWorkItems(autoAssignPreview.workItems);
-      
+
       // Check if this is a Clear All operation (all sprints have empty workItems)
       const isClearAllOperation = autoAssignPreview.sprints.every(sprint => sprint.workItems.length === 0);
-      
+
       if (isClearAllOperation) {
         console.log('🗑️ Clear All operation detected - updating sprints without backend sync');
         // Skip backend sync for Clear All to maintain cleared state
@@ -1217,7 +1164,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         // For regular auto-assign operations, use normal sync
         onUpdateSprints(autoAssignPreview.sprints);
       }
-      
+
       // Clear preview
       setAutoAssignPreview(null);
       console.log('✅ Auto-assign results saved successfully');
@@ -1236,17 +1183,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const clearSprintsFrom = (startSprintIndex: number) => {
     const sprintsToUpdate = [...data.sprints];
     const workItemsToUpdate = [...data.workItems];
-    
+
     // Get sprints to clear (from startSprintIndex to end)
     const sprintsToClear = upcomingSprints.slice(startSprintIndex);
     const sprintIdsToClear = new Set(sprintsToClear.map(s => s.id));
-    
+
     // Remove assignments from work items for these sprints
     workItemsToUpdate.forEach((item, itemIndex) => {
-      const updatedAssignedSprints = item.assignedSprints.filter(sprintId => 
+      const updatedAssignedSprints = item.assignedSprints.filter(sprintId =>
         !sprintIdsToClear.has(sprintId)
       );
-      
+
       if (updatedAssignedSprints.length !== item.assignedSprints.length) {
         workItemsToUpdate[itemIndex] = {
           ...item,
@@ -1254,22 +1201,22 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         };
       }
     });
-    
+
     onUpdateWorkItems(workItemsToUpdate);
     onUpdateSprints(sprintsToUpdate);
-    
+
     console.log(`🗑️ Cleared assignments from sprint ${startSprintIndex + 1} onwards`);
   };
 
   // Clear all assignments (show as preview)
   const clearAllAssignments = () => {
     console.log('🗑️ CLEAR ALL CLICKED - Starting clear process...');
-    console.log('🗑️ Original data.sprints sample:', data.sprints.slice(0, 3).map(s => ({ 
-      id: s.id, 
-      name: s.name, 
-      workItemsCount: s.workItems.length 
+    console.log('🗑️ Original data.sprints sample:', data.sprints.slice(0, 3).map(s => ({
+      id: s.id,
+      name: s.name,
+      workItemsCount: s.workItems.length
     })));
-    
+
     // Create completely new objects to ensure React detects the change
     const updatedWorkItems = data.workItems.map(item => ({
       ...item,
@@ -1277,7 +1224,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Add a timestamp to force object reference change
       _clearTimestamp: Date.now()
     }));
-    
+
     const updatedSprints = data.sprints.map(sprint => ({
       ...sprint,
       workItems: [],
@@ -1285,9 +1232,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       _clearTimestamp: Date.now()
     }));
 
-    console.log('🗑️ Created updatedSprints sample:', updatedSprints.slice(0, 3).map(s => ({ 
-      id: s.id, 
-      name: s.name, 
+    console.log('🗑️ Created updatedSprints sample:', updatedSprints.slice(0, 3).map(s => ({
+      id: s.id,
+      name: s.name,
       workItemsCount: s.workItems.length,
       timestamp: s._clearTimestamp
     })));
@@ -1300,7 +1247,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Add timestamp to force state change detection
       timestamp: Date.now()
     };
-    
+
     console.log('🗑️ Setting preview state:', {
       isPreviewActive: previewState.isPreviewActive,
       sprintsCount: previewState.sprints.length,
@@ -1311,19 +1258,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log('🗑️ BEFORE setAutoAssignPreview - Current state:', autoAssignPreview?.isPreviewActive);
     setAutoAssignPreview(previewState);
     console.log('🗑️ AFTER setAutoAssignPreview - New state should be:', previewState.isPreviewActive);
-    
+
     // Force a re-render check
     setTimeout(() => {
       console.log('🗑️ POST-TIMEOUT CHECK - State after 100ms:', autoAssignPreview?.isPreviewActive);
     }, 100);
-    
+
     console.log('🗑️ CLEAR ALL COMPLETE - Preview state set!');
   };
 
   // Assign item to sprint
   const assignItemToSprint = async (itemId: string, sprintId: string) => {
     console.log(`🔍 ASSIGN CALLED: ${itemId} → ${sprintId}`);
-    
+
     // Prevent duplicate assignments by checking if already processing
     if (processingAssignmentRef.current) {
       console.log('⚠️ Assignment already in progress, skipping');
@@ -1332,36 +1279,36 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     processingAssignmentRef.current = true;
 
     try {
-    // First, try to find the item in main work items array
-    let workItem = data.workItems.find(item => item.id === itemId);
-    
-    // If not found, search within epic children
-    if (!workItem) {
-      for (const epic of data.workItems.filter(item => item.isEpic)) {
-        const child = epic.children?.find(child => child.id === itemId);
-        if (child) {
-          workItem = child;
-          break;
-        }
-      }
-      
-      // Also search in regular Epic objects
+      // First, try to find the item in main work items array
+      let workItem = data.workItems.find(item => item.id === itemId);
+
+      // If not found, search within epic children
       if (!workItem) {
-        for (const epic of data.epics) {
-          const child = epic.children.find(child => child.id === itemId);
+        for (const epic of data.workItems.filter(item => item.isEpic)) {
+          const child = epic.children?.find(child => child.id === itemId);
           if (child) {
             workItem = child;
             break;
           }
         }
+
+        // Also search in regular Epic objects
+        if (!workItem) {
+          for (const epic of data.epics) {
+            const child = epic.children.find(child => child.id === itemId);
+            if (child) {
+              workItem = child;
+              break;
+            }
+          }
+        }
       }
-    }
-    
-    if (!workItem) {
-      console.error(`Work item ${itemId} not found`);
+
+      if (!workItem) {
+        console.error(`Work item ${itemId} not found`);
         alert(`Work item not found. Please refresh the page and try again.`);
-      return;
-    }
+        return;
+      }
 
       // Check if already assigned to this sprint
       if (workItem.assignedSprints.includes(sprintId)) {
@@ -1369,10 +1316,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         alert(`"${workItem.title}" is already assigned to this sprint.`);
         return;
       }
-      
+
       // Determine work item skill using enhanced detection
       let updatedWorkItem = { ...workItem };
-      
+
       // Use enhanced skill detection
       const detectedSkills = detectSkillsFromContent(workItem);
       console.log(`🔍 DEBUG: Work item "${workItem.title}" skill detection result:`, {
@@ -1380,7 +1327,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         detectedSkills: detectedSkills,
         detectedLength: detectedSkills.length
       });
-      
+
       // If we get a single skill back, apply it (regardless of current skills)
       if (detectedSkills.length === 1) {
         console.log(`🎯 Auto-detected skill: ${detectedSkills[0]} for "${workItem.title}"`);
@@ -1398,65 +1345,65 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             `Please specify the required skill:\n` +
             `Type "FE" for Frontend or "BE" for Backend:`
           );
-        
-        if (userChoice?.toLowerCase() === 'fe' || userChoice?.toLowerCase() === 'frontend') {
-          console.log(`👤 User selected Frontend skill for: "${workItem.title}"`);
-          updatedWorkItem = {
-            ...updatedWorkItem,
-            requiredSkills: ['frontend']
-          };
-        } else if (userChoice?.toLowerCase() === 'be' || userChoice?.toLowerCase() === 'backend') {
-          console.log(`👤 User selected Backend skill for: "${workItem.title}"`);
-          updatedWorkItem = {
-            ...updatedWorkItem,
-            requiredSkills: ['backend']
-          };
-        } else {
-          // User cancelled or provided invalid input
-          console.log(`❌ Invalid skill selection, keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
-          alert(`Invalid selection. Keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
-        }
+
+          if (userChoice?.toLowerCase() === 'fe' || userChoice?.toLowerCase() === 'frontend') {
+            console.log(`👤 User selected Frontend skill for: "${workItem.title}"`);
+            updatedWorkItem = {
+              ...updatedWorkItem,
+              requiredSkills: ['frontend']
+            };
+          } else if (userChoice?.toLowerCase() === 'be' || userChoice?.toLowerCase() === 'backend') {
+            console.log(`👤 User selected Backend skill for: "${workItem.title}"`);
+            updatedWorkItem = {
+              ...updatedWorkItem,
+              requiredSkills: ['backend']
+            };
+          } else {
+            // User cancelled or provided invalid input
+            console.log(`❌ Invalid skill selection, keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
+            alert(`Invalid selection. Keeping existing skills: ${workItem.requiredSkills.join(', ')}`);
+          }
         }
       }
-    
-    const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
-    
-    // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
+
+      const sprintInfo = sprintData.find(sd => sd.sprint.id === sprintId);
+
+      // Check if assignment is valid (enough skill-specific capacity and dependencies satisfied)
       if (updatedWorkItem && sprintInfo) {
-      // Check dependencies first
+        // Check dependencies first
         if (!canWorkItemStartInSprint(updatedWorkItem, sprintInfo.sprint, data.workItems, data.sprints)) {
           const blockedBy = updatedWorkItem.dependencies
-          .map(depId => data.workItems.find(w => w.id === depId))
-          .filter(dep => dep && dep.status !== 'Completed')
-          .map(dep => dep!.title);
-        
+            .map(depId => data.workItems.find(w => w.id === depId))
+            .filter(dep => dep && dep.status !== 'Completed')
+            .map(dep => dep!.title);
+
           const message = `Cannot assign "${updatedWorkItem.title}": Dependencies not satisfied.`;
           console.log(`❌ ${message} Blocked by: ${blockedBy.join(', ')}`);
           alert(`❌ ${message}\n\nBlocked by: ${blockedBy.join(', ')}`);
-        return;
-      }
-      
+          return;
+        }
+
         // Check skill capacity using the updated work item skills
         const canAssign = canWorkItemBeAssignedToSprint(updatedWorkItem, {
-        frontend: sprintInfo.availableFrontendCapacity,
-        backend: sprintInfo.availableBackendCapacity
-      });
-      
-      if (!canAssign) {
+          frontend: sprintInfo.availableFrontendCapacity,
+          backend: sprintInfo.availableBackendCapacity
+        });
+
+        if (!canAssign) {
           const message = `Cannot assign "${updatedWorkItem.title}": Insufficient ${updatedWorkItem.requiredSkills.join(' and ')} capacity in this sprint.`;
           console.log(`❌ ${message}`);
           alert(`❌ ${message}\n\nItem needs: ${updatedWorkItem.estimateStoryPoints} pts (${updatedWorkItem.requiredSkills.join(' + ')})\nAvailable: Frontend ${sprintInfo.availableFrontendCapacity.toFixed(1)} pts, Backend ${sprintInfo.availableBackendCapacity.toFixed(1)} pts`);
-        return;
+          return;
+        }
       }
-    }
 
       // Save sprint assignment to database
       // Both regular work items and epic children (if they exist as work items) can be assigned
       const isWorkItem = data.workItems.some(item => item.id === itemId);
-      const isEpicChild = data.workItems.some(epic => 
+      const isEpicChild = data.workItems.some(epic =>
         epic.isEpic && epic.children?.some(child => child.id === itemId)
       );
-      
+
       if (isWorkItem || isEpicChild) {
         try {
           // Save updated skills to database if they were modified
@@ -1466,20 +1413,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             await workItemsApi.update(itemId, workItemData);
             console.log('✅ Work item skills updated in database');
           }
-          
+
           // Check if already assigned to this sprint
           if (workItem.sprintId === sprintId) {
             console.log(`ℹ️ Work item "${workItem.title}" is already assigned to sprint ${targetSprint.name}`);
             alert(`ℹ️ "${workItem.title}" is already assigned to sprint "${targetSprint.name}"`);
             return;
           }
-          
+
           console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
           await workItemsApi.assignToSprint(itemId, sprintId);
           console.log('✅ Sprint assignment saved to database');
         } catch (error: any) {
           console.error('❌ Failed to save to database:', error);
-          
+
           // Show specific error message if available
           let errorMessage = 'Failed to save assignment. Please try again.';
           if (error?.response?.data?.error) {
@@ -1487,7 +1434,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           } else if (error?.message) {
             errorMessage = error.message;
           }
-          
+
           alert(`❌ ${errorMessage}`);
           return;
         }
@@ -1497,55 +1444,55 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         console.log(`❌ ${message}`);
         alert(`❌ ${message}\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
         return;
-    }
-
-    const updatedWorkItems = data.workItems.map(item => {
-      // Handle regular work items
-      if (item.id === itemId) {
-        return {
-          ...item,
-            requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
-          assignedSprints: item.assignedSprints.includes(sprintId) 
-            ? item.assignedSprints 
-            : [...item.assignedSprints, sprintId]
-        };
       }
-      
-      // Handle epic work items - update children
-      if (item.isEpic && item.children) {
-        const childIndex = item.children.findIndex(child => child.id === itemId);
-        if (childIndex !== -1) {
-          const updatedChildren = [...item.children];
-          updatedChildren[childIndex] = {
-            ...updatedChildren[childIndex],
-              requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
-            assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
-              ? updatedChildren[childIndex].assignedSprints
-              : [...updatedChildren[childIndex].assignedSprints, sprintId]
-          };
-          
+
+      const updatedWorkItems = data.workItems.map(item => {
+        // Handle regular work items
+        if (item.id === itemId) {
           return {
             ...item,
-            children: updatedChildren
+            requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
+            assignedSprints: item.assignedSprints.includes(sprintId)
+              ? item.assignedSprints
+              : [...item.assignedSprints, sprintId]
           };
         }
-      }
-      
-      return item;
-    });
 
-    const updatedSprints = data.sprints.map(sprint => {
-      if (sprint.id === sprintId && !sprint.workItems.includes(itemId)) {
-        return {
-          ...sprint,
-          workItems: [...sprint.workItems, itemId]
-        };
-      }
-      return sprint;
-    });
+        // Handle epic work items - update children
+        if (item.isEpic && item.children) {
+          const childIndex = item.children.findIndex(child => child.id === itemId);
+          if (childIndex !== -1) {
+            const updatedChildren = [...item.children];
+            updatedChildren[childIndex] = {
+              ...updatedChildren[childIndex],
+              requiredSkills: updatedWorkItem.requiredSkills, // Update skills based on description analysis
+              assignedSprints: updatedChildren[childIndex].assignedSprints.includes(sprintId)
+                ? updatedChildren[childIndex].assignedSprints
+                : [...updatedChildren[childIndex].assignedSprints, sprintId]
+            };
 
-    onUpdateWorkItems(updatedWorkItems);
-    onUpdateSprints(updatedSprints);
+            return {
+              ...item,
+              children: updatedChildren
+            };
+          }
+        }
+
+        return item;
+      });
+
+      const updatedSprints = data.sprints.map(sprint => {
+        if (sprint.id === sprintId && !sprint.workItems.includes(itemId)) {
+          return {
+            ...sprint,
+            workItems: [...sprint.workItems, itemId]
+          };
+        }
+        return sprint;
+      });
+
+      onUpdateWorkItems(updatedWorkItems);
+      onUpdateSprints(updatedSprints);
     } finally {
       // Always clear the processing flag
       setTimeout(() => {
@@ -1557,7 +1504,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Remove item from sprint
   const removeItemFromSprint = async (itemId: string, sprintId: string) => {
     console.log(`🗑️ REMOVE CALLED: ${itemId} from ${sprintId}`);
-    
+
     // Prevent duplicate removals
     if (processingRemovalRef.current) {
       console.log('⚠️ Removal already in progress, skipping');
@@ -1566,57 +1513,57 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     processingRemovalRef.current = true;
 
     try {
-    // Save sprint removal to database (for both regular work items and epic children that have been saved)
-    try {
-      console.log(`💾 Removing sprint assignment from database: ${itemId} ← ${sprintId}`);
-      await workItemsApi.removeFromSprint(itemId, sprintId);
-      console.log('✅ Sprint assignment removed from database');
-    } catch (error) {
-      console.error('❌ Failed to remove sprint assignment from database:', error);
-      console.log('⚠️ Item might be an unsaved epic child, continuing with local state update');
-    }
-
-    const updatedWorkItems = data.workItems.map(item => {
-      // Handle regular work items
-      if (item.id === itemId) {
-        return {
-          ...item,
-          assignedSprints: item.assignedSprints.filter(id => id !== sprintId)
-        };
+      // Save sprint removal to database (for both regular work items and epic children that have been saved)
+      try {
+        console.log(`💾 Removing sprint assignment from database: ${itemId} ← ${sprintId}`);
+        await workItemsApi.removeFromSprint(itemId, sprintId);
+        console.log('✅ Sprint assignment removed from database');
+      } catch (error) {
+        console.error('❌ Failed to remove sprint assignment from database:', error);
+        console.log('⚠️ Item might be an unsaved epic child, continuing with local state update');
       }
-      
-      // Handle epic work items - update children
-      if (item.isEpic && item.children) {
-        const childIndex = item.children.findIndex(child => child.id === itemId);
-        if (childIndex !== -1) {
-          const updatedChildren = [...item.children];
-          updatedChildren[childIndex] = {
-            ...updatedChildren[childIndex],
-            assignedSprints: updatedChildren[childIndex].assignedSprints.filter(id => id !== sprintId)
-          };
-          
+
+      const updatedWorkItems = data.workItems.map(item => {
+        // Handle regular work items
+        if (item.id === itemId) {
           return {
             ...item,
-            children: updatedChildren
+            assignedSprints: item.assignedSprints.filter(id => id !== sprintId)
           };
         }
-      }
-      
-      return item;
-    });
 
-    const updatedSprints = data.sprints.map(sprint => {
-      if (sprint.id === sprintId) {
-        return {
-          ...sprint,
-          workItems: sprint.workItems.filter(id => id !== itemId)
-        };
-      }
-      return sprint;
-    });
+        // Handle epic work items - update children
+        if (item.isEpic && item.children) {
+          const childIndex = item.children.findIndex(child => child.id === itemId);
+          if (childIndex !== -1) {
+            const updatedChildren = [...item.children];
+            updatedChildren[childIndex] = {
+              ...updatedChildren[childIndex],
+              assignedSprints: updatedChildren[childIndex].assignedSprints.filter(id => id !== sprintId)
+            };
 
-    onUpdateWorkItems(updatedWorkItems);
-    onUpdateSprints(updatedSprints);
+            return {
+              ...item,
+              children: updatedChildren
+            };
+          }
+        }
+
+        return item;
+      });
+
+      const updatedSprints = data.sprints.map(sprint => {
+        if (sprint.id === sprintId) {
+          return {
+            ...sprint,
+            workItems: sprint.workItems.filter(id => id !== itemId)
+          };
+        }
+        return sprint;
+      });
+
+      onUpdateWorkItems(updatedWorkItems);
+      onUpdateSprints(updatedSprints);
     } finally {
       // Always clear the processing flag
       setTimeout(() => {
@@ -1636,19 +1583,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       // Confirm with user before completing
       const confirmMessage = `Are you sure you want to mark "${sprint.name}" as completed?\n\nThis will remove it from the sprint planning view.`;
-      
+
       if (!confirm(confirmMessage)) {
         return;
       }
 
       console.log(`✅ Marking sprint as completed: ${sprintId} ("${sprint.name}")`);
-      
+
       // Mark sprint as completed
-      const updatedSprints = data.sprints.map(s => 
+      const updatedSprints = data.sprints.map(s =>
         s.id === sprintId ? { ...s, status: 'completed' as const } : s
       );
       await onUpdateSprints(updatedSprints);
-      
+
       console.log(`✅ Sprint "${sprint.name}" marked as completed`);
     } catch (error) {
       console.error('❌ Error completing sprint:', error);
@@ -1681,7 +1628,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       // Note: Work items assigned to this sprint will remain in the system
       // but their sprint assignments will naturally be cleaned up by the UI
-      
+
     } catch (error) {
       console.error('❌ Failed to archive sprint:', error);
       alert('❌ Failed to archive sprint. Please try again.');
@@ -1724,7 +1671,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const updateEpicPriority = async (epicId: string, priority: 'Critical' | 'High' | 'Medium' | 'Low') => {
     try {
       console.log(`🎯 Updating epic priority: ${epicId} -> ${priority}`);
-      
+
       // Use the consistent API service
       await workItemsApi.update(epicId, { priority });
 
@@ -1751,9 +1698,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         }
         return item;
       });
-      
+
       onUpdateWorkItems(updatedWorkItems);
-      
+
       console.log(`✅ Epic priority updated successfully - epic and all children updated`);
     } catch (error) {
       console.error('❌ Failed to update epic priority:', error);
@@ -1770,67 +1717,29 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       {/* Header with actions */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex justify-between items-center mb-4">
-          <div className="flex items-center gap-6">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
-              <Target className="h-5 w-5" />
-              Sprint Planning
-            </h2>
-            
-            {/* Search Section */}
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search ticket ID (e.g., REF-1234)"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="pl-8 pr-4 py-2 border border-gray-300 rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
-              </div>
-              <button
-                onClick={handleSearch}
-                disabled={searchLoading}
-                className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 text-sm flex items-center gap-1"
-              >
-                {searchLoading ? (
-                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                ) : (
-                  <Search className="h-4 w-4" />
-                )}
-                Search
-              </button>
-              {(searchResult || searchError) && (
-                <button
-                  onClick={clearSearch}
-                  className="px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 text-sm flex items-center gap-1"
-                >
-                  <X className="h-4 w-4" />
-                  Clear
-                </button>
-              )}
-            </div>
-          </div>
-                            <div className="flex gap-2">
-                    {(() => {
-                      console.log('🎨 UI RENDER CHECK:', {
-                        autoAssignPreview: autoAssignPreview,
-                        isPreviewActive: autoAssignPreview?.isPreviewActive,
-                        shouldShowPreview: autoAssignPreview?.isPreviewActive
-                      });
-                      return autoAssignPreview?.isPreviewActive;
-                    })() ? (
-                      // Preview mode - show Save/Clear buttons
-                      <>
-                        <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
-                          <AlertTriangle className="h-4 w-4" />
-                          {autoAssignPreview.possibleEndDate ? (
-                            `Preview Mode - End Date: ${format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy')}`
-                          ) : (
-                            'Preview Mode - Clear All Assignments'
-                          )}
-                        </div>
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Target className="h-5 w-5" />
+            Sprint Planning
+          </h2>
+          <div className="flex gap-2">
+            {(() => {
+              console.log('🎨 UI RENDER CHECK:', {
+                autoAssignPreview: autoAssignPreview,
+                isPreviewActive: autoAssignPreview?.isPreviewActive,
+                shouldShowPreview: autoAssignPreview?.isPreviewActive
+              });
+              return autoAssignPreview?.isPreviewActive;
+            })() ? (
+              // Preview mode - show Save/Clear buttons
+              <>
+                <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {autoAssignPreview.possibleEndDate ? (
+                    `Preview Mode - End Date: ${format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy')}`
+                  ) : (
+                    'Preview Mode - Clear All Assignments'
+                  )}
+                </div>
                 <button
                   onClick={saveAutoAssignPreview}
                   className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 flex items-center gap-2"
@@ -1873,16 +1782,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       <BarChart3 className="h-4 w-4" />
                       Capacity Analysis
                     </button>
-                                    <button
-                  onClick={() => {
-                    console.log('🖱️ CLEAR ALL BUTTON CLICKED!');
-                    clearAllAssignments();
-                  }}
-                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-2"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Clear All
-                </button>
+                    <button
+                      onClick={() => {
+                        console.log('🖱️ CLEAR ALL BUTTON CLICKED!');
+                        clearAllAssignments();
+                      }}
+                      className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-2"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Clear All
+                    </button>
                   </>
                 );
               })()
@@ -1914,104 +1823,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         </div>
       </div>
 
-      {/* Search Results Section */}
-      {(searchResult || searchError) && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Search className="h-5 w-5" />
-            Search Results
-          </h3>
-          
-          {searchError && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-              <div className="flex items-center gap-2 text-red-800">
-                <AlertCircle className="h-4 w-4" />
-                <span className="font-medium">Not Found</span>
-              </div>
-              <p className="text-red-700 text-sm mt-1">{searchError}</p>
-            </div>
-          )}
-          
-          {searchResult && (
-            <div className="space-y-4">
-              {/* Work Item Details */}
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-medium text-blue-900">
-                      {searchResult.workItem.jiraId}: {searchResult.workItem.title}
-                    </h4>
-                    <p className="text-blue-700 text-sm mt-1">{searchResult.workItem.description}</p>
-                    <div className="flex items-center gap-4 mt-2 text-sm text-blue-600">
-                      <span>{searchResult.workItem.estimateStoryPoints} story points</span>
-                      <span className={`px-2 py-1 rounded ${
-                        searchResult.workItem.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                        searchResult.workItem.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {searchResult.workItem.status}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Sprint Assignments */}
-              {searchResult.sprints.length > 0 ? (
-                <div>
-                  <h5 className="font-medium text-gray-900 mb-2">
-                    Assigned to {searchResult.sprints.length} sprint(s):
-                  </h5>
-                  <div className="space-y-2">
-                    {searchResult.sprints.map((sprint: any) => (
-                      <div key={sprint.id} className="p-3 bg-green-50 border border-green-200 rounded-md">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <span className="font-medium text-green-900">{sprint.name}</span>
-                            <span className="text-green-700 text-sm ml-2">
-                              ({format(new Date(sprint.startDate), 'MMM dd')} - {format(new Date(sprint.endDate), 'MMM dd, yyyy')})
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => {
-                              // Scroll to the sprint
-                              const sprintElement = document.querySelector(`[data-sprint-id="${sprint.id}"]`);
-                              if (sprintElement) {
-                                sprintElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                              }
-                            }}
-                            className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center gap-1"
-                          >
-                            <Target className="h-3 w-3" />
-                            Go to Sprint
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-                  <div className="flex items-center gap-2 text-yellow-800">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span className="font-medium">Not Assigned</span>
-                  </div>
-                  <p className="text-yellow-700 text-sm mt-1">
-                    This ticket is not currently assigned to any sprint.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Velocity Insights Panel */}
       {showVelocityInsights && (() => {
         const velocityAnalysis = analyzeVelocityTrends(data.sprints);
         const teamCapacity = analyzeTeamCapacity(data.teamMembers, data.workItems, velocityAnalysis);
         const velocityPlan = generateVelocityAwareSprintPlan(data.sprints, data.workItems, data.teamMembers);
-        
+
         return (
           <div className="mb-6 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg shadow-lg p-6 border border-blue-200">
             <div className="flex items-center justify-between mb-4">
@@ -2026,7 +1843,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Historical Velocity Analysis */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -2040,20 +1857,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Velocity Trend:</span>
-                    <span className={`font-bold ${
-                      velocityAnalysis.velocityTrend === 'improving' ? 'text-green-600' :
-                      velocityAnalysis.velocityTrend === 'declining' ? 'text-red-600' : 'text-gray-600'
-                    }`}>
+                    <span className={`font-bold ${velocityAnalysis.velocityTrend === 'improving' ? 'text-green-600' :
+                        velocityAnalysis.velocityTrend === 'declining' ? 'text-red-600' : 'text-gray-600'
+                      }`}>
                       {velocityAnalysis.velocityTrend === 'improving' ? '📈 Improving' :
-                       velocityAnalysis.velocityTrend === 'declining' ? '📉 Declining' : '📊 Stable'}
+                        velocityAnalysis.velocityTrend === 'declining' ? '📉 Declining' : '📊 Stable'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Confidence Level:</span>
-                    <span className={`font-bold ${
-                      velocityAnalysis.confidenceLevel === 'high' ? 'text-green-600' :
-                      velocityAnalysis.confidenceLevel === 'medium' ? 'text-yellow-600' : 'text-red-600'
-                    }`}>
+                    <span className={`font-bold ${velocityAnalysis.confidenceLevel === 'high' ? 'text-green-600' :
+                        velocityAnalysis.confidenceLevel === 'medium' ? 'text-yellow-600' : 'text-red-600'
+                      }`}>
                       {velocityAnalysis.confidenceLevel.toUpperCase()}
                     </span>
                   </div>
@@ -2073,7 +1888,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                 </div>
               </div>
-              
+
               {/* Team Capacity Analysis */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
                 <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
@@ -2100,7 +1915,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                 </div>
               </div>
-              
+
               {/* Recommendations */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
                 <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
@@ -2118,7 +1933,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       All systems are running optimally! 🎯
                     </div>
                   )}
-                  
+
                   {velocityAnalysis.sprintsWithData === 0 && (
                     <div className="text-sm text-blue-700 p-2 bg-blue-50 rounded border-l-4 border-blue-400">
                       💡 Tip: Use the <strong>Sprint Sync</strong> tab to import completed sprint data from Jira for better velocity predictions.
@@ -2135,7 +1950,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       {showBottleneckAnalysis && (() => {
         const analysis = analyzeCapacityBottlenecks();
         if (!analysis) return null;
-        
+
         return (
           <div className="mb-6 bg-gradient-to-r from-amber-50 to-red-50 rounded-lg shadow-lg p-6 border border-amber-200">
             <div className="flex items-center justify-between mb-4">
@@ -2150,7 +1965,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Capacity Distribution */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -2176,17 +1991,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                     <span className="text-sm font-medium text-gray-700">Total Capacity:</span>
                     <span className="font-bold text-gray-800">{analysis.totalCapacity.toFixed(1)} pts</span>
                   </div>
-                  
+
                   {/* Visual capacity bar */}
                   <div className="mt-4">
                     <div className="flex h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div 
+                      <div
                         className="bg-blue-500 flex items-center justify-center text-xs text-white font-medium"
                         style={{ width: `${analysis.frontendRatio * 100}%` }}
                       >
                         {analysis.frontendRatio > 0.15 ? 'FE' : ''}
                       </div>
-                      <div 
+                      <div
                         className="bg-green-500 flex items-center justify-center text-xs text-white font-medium"
                         style={{ width: `${analysis.backendRatio * 100}%` }}
                       >
@@ -2225,7 +2040,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       {analysis.overallUtilization.toFixed(1)}%
                     </span>
                   </div>
-                  
+
                   {/* Bottleneck indicator */}
                   {analysis.isBottleneck && (
                     <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -2234,7 +2049,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         Bottleneck Detected!
                       </div>
                       <div className="text-sm text-red-600 mt-1">
-                        <strong>{analysis.limitingSkill.charAt(0).toUpperCase() + analysis.limitingSkill.slice(1)}</strong> capacity 
+                        <strong>{analysis.limitingSkill.charAt(0).toUpperCase() + analysis.limitingSkill.slice(1)}</strong> capacity
                         ({(analysis.limitingRatio * 100).toFixed(1)}% of total) is limiting sprint utilization to {analysis.limitingUtilization.toFixed(1)}%
                       </div>
                     </div>
@@ -2254,14 +2069,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         <strong>🚨 {analysis.limitingSkill.charAt(0).toUpperCase() + analysis.limitingSkill.slice(1)} Bottleneck:</strong>
                         <br />Your {analysis.limitingSkill} team is at {analysis.limitingUtilization.toFixed(1)}% utilization, preventing higher sprint fill rates.
                       </div>
-                      
+
                       <div className="text-sm text-amber-700 p-2 bg-amber-50 rounded border-l-4 border-amber-400">
                         <strong>📋 Work Item Distribution:</strong>
                         <br />• {analysis.workItemsRequiringFrontend} items need Frontend
-                        <br />• {analysis.workItemsRequiringBackend} items need Backend  
+                        <br />• {analysis.workItemsRequiringBackend} items need Backend
                         <br />• {analysis.workItemsRequiringBoth} items need Both skills
                       </div>
-                      
+
                       <div className="text-sm text-blue-700 p-2 bg-blue-50 rounded border-l-4 border-blue-400">
                         <strong>🎯 Solutions:</strong>
                         <br />• Cross-train team members in {analysis.limitingSkill}
@@ -2288,11 +2103,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         {/* Unassigned Items */}
         <div className="w-full lg:w-1/3 bg-white rounded-lg shadow p-6 flex flex-col">
           <h3 className="text-lg font-semibold mb-4">Unassigned Work Items</h3>
-          
 
-          
 
-          
+
+
+
           {unassignedItems.length === 0 && unassignedEpicWorkItems.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <CheckCircle className="h-12 w-12 mx-auto mb-2 text-green-300" />
@@ -2313,133 +2128,118 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         key={item.id}
                         data-item-id={item.id}
                         onPointerDown={(e) => {
-                            // Only start potential drag on left mouse button
-                            if (e.button !== 0) return;
-                            
-                            console.log(`🔽 POINTER DOWN: Starting potential drag for "${item.title}"`);
-                            setDragStart({
-                              x: e.clientX,
-                              y: e.clientY,
-                              itemId: item.id
-                            });
-                            // Don't prevent default to allow scrolling
-                          }}
-                          onClick={(e) => {
-                            console.log(`🖱️ CLICKED on item: "${item.title}"`);
-                          }}
-                          onPointerUp={(e) => {
-                            console.log(`🔼 ITEM POINTER UP: draggedItem=${draggedItem}, item.id=${item.id}`);
-                            
-                            // Always clear drag start on pointer up
-                            setDragStart(null);
-                            
-                            if (draggedItem === item.id) {
-                              // Check if we're over a sprint area using elementFromPoint
-                              const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
-                              if (elementUnderPointer) {
-                                // Look for sprint container by traversing up the DOM
-                                let sprintElement = elementUnderPointer;
-                                let sprintId = null;
-                                
-                                while (sprintElement && !sprintId) {
-                                  // Check for data-sprint-id attribute
-                                  if (sprintElement instanceof HTMLElement && sprintElement.dataset.sprintId) {
-                                    sprintId = sprintElement.dataset.sprintId;
-                                    break;
-                                  }
-                                  
-                                  // Check for sprint container characteristics
-                                  const classList = Array.from(sprintElement.classList);
-                                  if (classList.includes('border-dashed') && classList.includes('p-6')) {
-                                    // Try to find sprint name in this container
-                                    const sprintNameElement = sprintElement.querySelector('h4');
-                                    if (sprintNameElement) {
-                                      const sprintName = sprintNameElement.textContent;
-                                      const matchingSprint = upcomingSprints.find(s => s.name === sprintName);
-                                      if (matchingSprint) {
-                                        sprintId = matchingSprint.id;
-                                        break;
-                                      }
+                          // Only start potential drag on left mouse button
+                          if (e.button !== 0) return;
+
+                          console.log(`🔽 POINTER DOWN: Starting potential drag for "${item.title}"`);
+                          setDragStart({
+                            x: e.clientX,
+                            y: e.clientY,
+                            itemId: item.id
+                          });
+                          // Don't prevent default to allow scrolling
+                        }}
+                        onClick={(e) => {
+                          console.log(`🖱️ CLICKED on item: "${item.title}"`);
+                        }}
+                        onPointerUp={(e) => {
+                          console.log(`🔼 ITEM POINTER UP: draggedItem=${draggedItem}, item.id=${item.id}`);
+
+                          // Always clear drag start on pointer up
+                          setDragStart(null);
+
+                          if (draggedItem === item.id) {
+                            // Check if we're over a sprint area using elementFromPoint
+                            const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
+                            if (elementUnderPointer) {
+                              // Look for sprint container by traversing up the DOM
+                              let sprintElement = elementUnderPointer;
+                              let sprintId = null;
+
+                              while (sprintElement && !sprintId) {
+                                // Check for data-sprint-id attribute
+                                if (sprintElement instanceof HTMLElement && sprintElement.dataset.sprintId) {
+                                  sprintId = sprintElement.dataset.sprintId;
+                                  break;
+                                }
+
+                                // Check for sprint container characteristics
+                                const classList = Array.from(sprintElement.classList);
+                                if (classList.includes('border-dashed') && classList.includes('p-6')) {
+                                  // Try to find sprint name in this container
+                                  const sprintNameElement = sprintElement.querySelector('h4');
+                                  if (sprintNameElement) {
+                                    const sprintName = sprintNameElement.textContent;
+                                    const matchingSprint = upcomingSprints.find(s => s.name === sprintName);
+                                    if (matchingSprint) {
+                                      sprintId = matchingSprint.id;
+                                      break;
                                     }
                                   }
-                                  sprintElement = sprintElement.parentElement as HTMLElement;
                                 }
-                                
-                                if (sprintId) {
-                                  addDebugEvent(`🎯 SUCCESS! Assigned "${item.title}" to sprint`);
-                                  
-                                  // Stop event propagation to prevent sprint handler from also firing
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  
-                                  // Mark drop as handled
-                                  dropHandledRef.current = true;
-                                  
-                                  // Assign to sprint (global handler will clean up drag state)
-                                  assignItemToSprint(draggedItem, sprintId);
-                                  return; // Successfully handled
-                                }
+                                sprintElement = sprintElement.parentElement as HTMLElement;
                               }
-                              
-                              // No sprint found - global handler will clean up drag state
+
+                              if (sprintId) {
+                                addDebugEvent(`🎯 SUCCESS! Assigned "${item.title}" to sprint`);
+
+                                // Stop event propagation to prevent sprint handler from also firing
+                                e.stopPropagation();
+                                e.preventDefault();
+
+                                // Mark drop as handled
+                                dropHandledRef.current = true;
+
+                                // Assign to sprint (global handler will clean up drag state)
+                                assignItemToSprint(draggedItem, sprintId);
+                                return; // Successfully handled
+                              }
                             }
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            return false;
-                          }}
-                                                  className={`p-4 border rounded-lg hover:shadow-md transition-all duration-200 select-none cursor-grab active:cursor-grabbing ${
-                            (() => {
-                              const itemColor = getWorkItemColor(item);
-                              return `${itemColor.background} ${itemColor.border} hover:border-opacity-80`;
-                            })()
-                          }`}
-                                                      style={{ 
-                            userSelect: 'none',
-                            cursor: 'grab',
-                            touchAction: 'pan-y', // Allow vertical scrolling
-                            WebkitUserSelect: 'none',
-                            MozUserSelect: 'none',
-                            msUserSelect: 'none',
-                            WebkitTouchCallout: 'none',
-                            WebkitTapHighlightColor: 'transparent',
-                            pointerEvents: 'auto',
-                            position: 'relative',
-                            zIndex: 1,
-                            transition: 'all 0.2s ease'
-                          }}
+
+                            // No sprint found - global handler will clean up drag state
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          return false;
+                        }}
+                        className="p-4 border border-amber-300 rounded-lg hover:shadow-md hover:border-amber-400 transition-all duration-200 bg-amber-50 select-none cursor-grab active:cursor-grabbing"
+                        style={{
+                          userSelect: 'none',
+                          cursor: 'grab',
+                          touchAction: 'pan-y', // Allow vertical scrolling
+                          WebkitUserSelect: 'none',
+                          MozUserSelect: 'none',
+                          msUserSelect: 'none',
+                          WebkitTouchCallout: 'none',
+                          WebkitTapHighlightColor: 'transparent',
+                          pointerEvents: 'auto',
+                          position: 'relative',
+                          zIndex: 1,
+                          transition: 'all 0.2s ease'
+                        }}
                       >
-                        <div className="space-y-1">
-                          {/* Epic label if item belongs to an epic */}
-                          {item.epicId && (
-                            <div className={`text-xs font-medium ${getWorkItemColor(item).label} px-2 py-0.5 rounded inline-block`}>
-                              📋 {getEpicTitle(item.epicId, data.workItems)}
-                            </div>
-                          )}
-                          <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
-                        </div>
+                        <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                         <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                           <div className="flex items-center gap-2">
                             <span>{item.estimateStoryPoints} pts</span>
                             <div className="flex gap-1">
                               {item.requiredSkills.map(skill => (
-                                <span 
+                                <span
                                   key={skill}
-                                  className={`px-1 py-0.5 rounded text-xs font-medium ${
-                                    skill === 'frontend' 
-                                      ? 'bg-purple-100 text-purple-800' 
+                                  className={`px-1 py-0.5 rounded text-xs font-medium ${skill === 'frontend'
+                                      ? 'bg-purple-100 text-purple-800'
                                       : 'bg-orange-100 text-orange-800'
-                                  }`}
+                                    }`}
                                 >
                                   {skill === 'frontend' ? 'FE' : 'BE'}
                                 </span>
                               ))}
                             </div>
                           </div>
-                          <span className={`font-medium ${
-                            isBefore(item.requiredCompletionDate, new Date()) ? 'text-red-600' : ''
-                          }`}>
+                          <span className={`font-medium ${isBefore(item.requiredCompletionDate, new Date()) ? 'text-red-600' : ''
+                            }`}>
                             Due: {format(item.requiredCompletionDate, 'MMM dd')}
                           </span>
                         </div>
@@ -2454,7 +2254,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
                 </div>
               )}
-              
+
               {/* Blocked Items */}
               {blockedItems.length > 0 && (
                 <div>
@@ -2467,47 +2267,32 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                       const blockingDeps = item.dependencies
                         .map(depId => data.workItems.find(w => w.id === depId))
                         .filter(dep => dep && dep.status !== 'Completed');
-                      
+
                       return (
                         <div
                           key={item.id}
-                          className={`p-4 border rounded-lg hover:shadow-sm transition-all duration-200 ${
-                            (() => {
-                              const itemColor = getWorkItemColor(item);
-                              return `${itemColor.background} ${itemColor.border} hover:border-opacity-80`;
-                            })()
-                          }`}
+                          className="p-4 border rounded-lg bg-amber-50 border-amber-200 hover:border-amber-300 hover:shadow-sm transition-all duration-200"
                         >
-                          <div className="space-y-1">
-                            {/* Epic label if item belongs to an epic */}
-                            {item.epicId && (
-                              <div className={`text-xs font-medium ${getWorkItemColor(item).label} px-2 py-0.5 rounded inline-block`}>
-                                📋 {getEpicTitle(item.epicId, data.workItems)}
-                              </div>
-                            )}
-                            <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
-                          </div>
+                          <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                           <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                             <div className="flex items-center gap-2">
                               <span>{item.estimateStoryPoints} pts</span>
                               <div className="flex gap-1">
                                 {item.requiredSkills.map(skill => (
-                                  <span 
+                                  <span
                                     key={skill}
-                                    className={`px-1 py-0.5 rounded text-xs font-medium ${
-                                      skill === 'frontend' 
-                                        ? 'bg-purple-100 text-purple-800' 
+                                    className={`px-1 py-0.5 rounded text-xs font-medium ${skill === 'frontend'
+                                        ? 'bg-purple-100 text-purple-800'
                                         : 'bg-orange-100 text-orange-800'
-                                    }`}
+                                      }`}
                                   >
                                     {skill === 'frontend' ? 'FE' : 'BE'}
                                   </span>
                                 ))}
                               </div>
                             </div>
-                            <span className={`font-medium ${
-                              isBefore(item.requiredCompletionDate, new Date()) ? 'text-red-600' : ''
-                            }`}>
+                            <span className={`font-medium ${isBefore(item.requiredCompletionDate, new Date()) ? 'text-red-600' : ''
+                              }`}>
                               Due: {format(item.requiredCompletionDate, 'MMM dd')}
                             </span>
                           </div>
@@ -2522,252 +2307,249 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               )}
 
               {/* Epic Work Items - Display as top-level items */}
-                    {unassignedEpicWorkItems.map(epic => {
-                      const epicColor = getWorkItemColor(epic);
-                      return (
-                      <div key={epic.id} className={`border rounded-lg ${epicColor.background} ${epicColor.border}`}>
-                        {/* Epic Header */}
-                        <div 
-                          className={`p-3 cursor-pointer flex items-center gap-2 transition-colors hover:opacity-80`}
-                          onClick={() => {
-                            console.log(`🖱️ EPIC HEADER CLICKED: ${epic.id}`);
-                            toggleEpicExpansion(epic.id);
+              {unassignedEpicWorkItems.map(epic => (
+                <div key={epic.id} className="border rounded-lg bg-indigo-50 border-indigo-200">
+                  {/* Epic Header */}
+                  <div
+                    className="p-3 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
+                    onClick={() => {
+                      console.log(`🖱️ EPIC HEADER CLICKED: ${epic.id}`);
+                      toggleEpicExpansion(epic.id);
+                    }}
+                  >
+                    {expandedEpics.has(epic.id) ? (
+                      <ChevronDown className="h-4 w-4 text-indigo-600" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-indigo-600" />
+                    )}
+                    <div className="flex-1">
+                      <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
+                        📋 {epic.jiraId ? (
+                          <>
+                            <a
+                              href={`https://cvs-hcd.atlassian.net/browse/${epic.jiraId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {epic.jiraId}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                            <span className="ml-1">- {epic.title}</span>
+                          </>
+                        ) : epic.title}
+                        {/* Priority Badge */}
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPriorityStyles(epic.priority || 'Medium')}`}>
+                          {epic.priority || 'Medium'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-indigo-600 flex items-center justify-between">
+                        <span>Epic • {epic.children?.length || 0} children • {epic.jiraId}</span>
+                        {/* Priority Dropdown */}
+                        <select
+                          value={epic.priority || 'Medium'}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            updateEpicPriority(epic.id, e.target.value as 'Critical' | 'High' | 'Medium' | 'Low');
                           }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs border border-indigo-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
-                          {expandedEpics.has(epic.id) ? (
-                            <ChevronDown className={`h-4 w-4 ${epicColor.text}`} />
-                          ) : (
-                            <ChevronRight className={`h-4 w-4 ${epicColor.text}`} />
-                          )}
-                          <div className="flex-1">
-                            <div className={`font-medium text-sm ${epicColor.text} flex items-center gap-2`}>
-                              📋 {epic.jiraId ? (
+                          <option value="Critical">Critical</option>
+                          <option value="High">High</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Low">Low</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Epic Children (when expanded) */}
+                  {expandedEpics.has(epic.id) && epic.children && (
+                    <div style={{
+                      maxHeight: '300px',
+                      width: '100%',
+                      overflowY: 'auto',
+                      overflowX: 'hidden',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      padding: '12px',
+                      backgroundColor: '#f9fafb',
+                      marginTop: '8px'
+                    }}>
+                      <div style={{
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        marginBottom: '12px',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb',
+                        paddingBottom: '8px'
+                      }}>
+                        Epic Children ({epic.children?.length || 0} items)
+                      </div>
+
+                      {epic.children?.map((child, index) => {
+                        // Apply enhanced skill detection for epic children
+                        const detectedSkills = detectSkillsFromContent(child);
+
+                        const isCompleted = child.status === 'Completed';
+                        const isAssigned = child.assignedSprints.length > 0;
+                        const isDraggable = !isAssigned && !isCompleted;
+
+                        return (
+                          <div
+                            key={child.id}
+                            data-item-id={child.id}
+                            onPointerDown={isDraggable ? (e) => {
+                              // Only start potential drag on left mouse button
+                              if (e.button !== 0) return;
+
+                              setDragStart({
+                                x: e.clientX,
+                                y: e.clientY,
+                                itemId: child.id
+                              });
+                              // Don't prevent default to allow scrolling
+                            } : undefined}
+                            onPointerUp={isDraggable ? (e) => {
+                              // Always clear drag start on pointer up
+                              setDragStart(null);
+
+                              if (draggedItem === child.id) {
+                                const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
+                                let sprintElement = elementUnderPointer;
+                                let sprintId = null;
+
+                                // Look for sprint container
+                                while (sprintElement && !sprintId) {
+                                  if (sprintElement instanceof HTMLElement && sprintElement.dataset.sprintId) {
+                                    sprintId = sprintElement.dataset.sprintId;
+                                    break;
+                                  }
+                                  sprintElement = sprintElement.parentElement as HTMLElement;
+                                }
+
+                                if (sprintId) {
+                                  console.log(`🎯 SUCCESS! Epic child "${child.title}" assigned to sprint`);
+                                  e.stopPropagation();
+                                  e.preventDefault();
+
+                                  // Mark that this drop was handled by a specific handler
+                                  dropHandledRef.current = true;
+
+                                  assignItemToSprint(child.id, sprintId);
+                                  return;
+                                }
+                              }
+                            } : undefined}
+                            style={{
+                              display: 'block',
+                              width: '100%',
+                              margin: '0 0 8px 0',
+                              padding: '12px',
+                              border: `1px solid ${isCompleted ? '#bbf7d0' : isAssigned ? '#bfdbfe' : isDraggable ? '#fed7aa' : '#e5e7eb'}`,
+                              borderRadius: '6px',
+                              backgroundColor: isCompleted ? '#f0fdf4' : isAssigned ? '#eff6ff' : isDraggable ? '#fffbeb' : '#f9fafb',
+                              color: isCompleted ? '#166534' : isAssigned ? '#1e40af' : '#374151',
+                              fontSize: '14px',
+                              lineHeight: '1.5',
+                              cursor: isDraggable ? 'grab' : 'default',
+                              userSelect: 'none',
+                              touchAction: 'pan-y', // Allow vertical scrolling
+                              boxSizing: 'border-box',
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            <div style={{ fontWeight: '500', marginBottom: '6px' }}>
+                              {child.jiraId ? (
                                 <>
-                                  <a 
-                                    href={`https://cvs-hcd.atlassian.net/browse/${epic.jiraId}`}
+                                  <a
+                                    href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
                                     onClick={(e) => e.stopPropagation()}
+                                    style={{ textDecoration: 'none' }}
                                   >
-                                    {epic.jiraId}
+                                    {child.jiraId}
                                     <ExternalLink className="h-3 w-3" />
                                   </a>
-                                  <span className="ml-1">- {epic.title}</span>
+                                  <span style={{ marginLeft: '4px' }}>- {child.title}</span>
                                 </>
-                              ) : epic.title}
-                              {/* Priority Badge */}
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPriorityStyles(epic.priority || 'Medium')}`}>
-                                {epic.priority || 'Medium'}
+                              ) : child.title}
+                            </div>
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              fontSize: '12px',
+                              color: '#6b7280'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>{child.estimateStoryPoints ?? 'not set'} pts</span>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  {detectedSkills.map(skill => (
+                                    <span
+                                      key={skill}
+                                      style={{
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        fontSize: '11px',
+                                        fontWeight: '500',
+                                        backgroundColor: skill === 'frontend' ? '#f3e8ff' : '#fed7aa',
+                                        color: skill === 'frontend' ? '#7c3aed' : '#ea580c'
+                                      }}
+                                    >
+                                      {skill === 'frontend' ? 'FE' : 'BE'}
+                                    </span>
+                                  ))}
+                                </div>
+                                {/* Always show Jira status */}
+                                <span style={{
+                                  color: isCompleted ? '#059669' : '#6b7280',
+                                  fontWeight: '500'
+                                }}>
+                                  {isCompleted ? '✓ ' : ''}{child.jiraStatus || child.status}
+                                </span>
+                                {isAssigned && !isCompleted && (
+                                  <span style={{ color: '#2563eb', fontWeight: '500' }}>
+                                    📅 {getSprintName(child.assignedSprints, data.sprints)}
+                                  </span>
+                                )}
+                              </div>
+                              <span style={{
+                                fontWeight: '500',
+                                color: !isCompleted && isBefore(child.requiredCompletionDate, new Date()) ? '#dc2626' : '#6b7280'
+                              }}>
+                                Due: {format(child.requiredCompletionDate, 'MMM dd')}
                               </span>
                             </div>
-                            <div className="text-xs text-indigo-600 flex items-center justify-between">
-                              <span>Epic • {epic.children?.length || 0} children • {epic.jiraId}</span>
-                              {/* Priority Dropdown */}
-                              <select
-                                value={epic.priority || 'Medium'}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  updateEpicPriority(epic.id, e.target.value as 'Critical' | 'High' | 'Medium' | 'Low');
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-xs border border-indigo-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              >
-                                <option value="Critical">Critical</option>
-                                <option value="High">High</option>
-                                <option value="Medium">Medium</option>
-                                <option value="Low">Low</option>
-                              </select>
-                            </div>
+                            {!isDraggable && (
+                              <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                                {isCompleted ? 'Cannot assign completed items' : 'Already assigned to a sprint'}
+                              </div>
+                            )}
+                            {!isCompleted && isBefore(child.requiredCompletionDate, new Date()) && (
+                              <div style={{
+                                fontSize: '11px',
+                                color: '#dc2626',
+                                marginTop: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                <AlertTriangle style={{ height: '12px', width: '12px' }} />
+                                Overdue
+                              </div>
+                            )}
                           </div>
-                        </div>
-
-                        {/* Epic Children (when expanded) */}
-                        {expandedEpics.has(epic.id) && epic.children && (
-                          <div style={{
-                            maxHeight: '300px',
-                            width: '100%',
-                            overflowY: 'auto',
-                            overflowX: 'hidden',
-                            border: '1px solid #e5e7eb',
-                            borderRadius: '8px',
-                            padding: '12px',
-                            backgroundColor: '#f9fafb',
-                            marginTop: '8px'
-                          }}>
-                            <div style={{ 
-                              fontSize: '14px', 
-                              fontWeight: '600', 
-                              marginBottom: '12px',
-                              color: '#374151',
-                              borderBottom: '1px solid #e5e7eb',
-                              paddingBottom: '8px'
-                            }}>
-                              Epic Children ({epic.children?.length || 0} items)
-                            </div>
-                            
-                            {epic.children?.map((child, index) => {
-                              // Apply enhanced skill detection for epic children
-                              const detectedSkills = detectSkillsFromContent(child);
-                              
-                              const isCompleted = child.status === 'Completed';
-                              const isAssigned = child.assignedSprints.length > 0;
-                              const isDraggable = !isAssigned && !isCompleted;
-
-                              return (
-                                <div
-                                  key={child.id}
-                                  data-item-id={child.id}
-                                  onPointerDown={isDraggable ? (e) => {
-                                    // Only start potential drag on left mouse button
-                                    if (e.button !== 0) return;
-                                    
-                                    setDragStart({
-                                      x: e.clientX,
-                                      y: e.clientY,
-                                      itemId: child.id
-                                    });
-                                    // Don't prevent default to allow scrolling
-                                  } : undefined}
-                                  onPointerUp={isDraggable ? (e) => {
-                                    // Always clear drag start on pointer up
-                                    setDragStart(null);
-                                    
-                                    if (draggedItem === child.id) {
-                                      const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
-                                      let sprintElement = elementUnderPointer;
-                                      let sprintId = null;
-                                      
-                                      // Look for sprint container
-                                      while (sprintElement && !sprintId) {
-                                        if (sprintElement instanceof HTMLElement && sprintElement.dataset.sprintId) {
-                                          sprintId = sprintElement.dataset.sprintId;
-                                          break;
-                                        }
-                                        sprintElement = sprintElement.parentElement as HTMLElement;
-                                      }
-                                      
-                                      if (sprintId) {
-                                        console.log(`🎯 SUCCESS! Epic child "${child.title}" assigned to sprint`);
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        
-                                        // Mark that this drop was handled by a specific handler
-                                        dropHandledRef.current = true;
-                                        
-                                        assignItemToSprint(child.id, sprintId);
-                                        return;
-                                      }
-                                    }
-                                  } : undefined}
-                                  style={{ 
-                                    display: 'block',
-                                    width: '100%',
-                                    margin: '0 0 8px 0',
-                                    padding: '12px',
-                                    border: `1px solid ${isCompleted ? '#bbf7d0' : isAssigned ? '#bfdbfe' : isDraggable ? '#fed7aa' : '#e5e7eb'}`,
-                                    borderRadius: '6px',
-                                    backgroundColor: isCompleted ? '#f0fdf4' : isAssigned ? '#eff6ff' : isDraggable ? '#fffbeb' : '#f9fafb',
-                                    color: isCompleted ? '#166534' : isAssigned ? '#1e40af' : '#374151',
-                                    fontSize: '14px',
-                                    lineHeight: '1.5',
-                                    cursor: isDraggable ? 'grab' : 'default',
-                                    userSelect: 'none',
-                                    touchAction: 'pan-y', // Allow vertical scrolling
-                                    boxSizing: 'border-box',
-                                    transition: 'all 0.2s ease'
-                                  }}
-                                >
-                                  <div style={{ fontWeight: '500', marginBottom: '6px' }}>
-                                    {child.jiraId ? (
-                                      <>
-                                        <a 
-                                          href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                          onClick={(e) => e.stopPropagation()}
-                                          style={{ textDecoration: 'none' }}
-                                        >
-                                          {child.jiraId}
-                                          <ExternalLink className="h-3 w-3" />
-                                        </a>
-                                        <span style={{ marginLeft: '4px' }}>- {child.title}</span>
-                                      </>
-                                    ) : child.title}
-                                  </div>
-                                  <div style={{ 
-                                    display: 'flex', 
-                                    justifyContent: 'space-between', 
-                                    alignItems: 'center',
-                                    fontSize: '12px',
-                                    color: '#6b7280'
-                                  }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                      <span>{child.estimateStoryPoints} pts</span>
-                                      <div style={{ display: 'flex', gap: '4px' }}>
-                                        {detectedSkills.map(skill => (
-                                          <span 
-                                            key={skill}
-                                            style={{
-                                              padding: '2px 6px',
-                                              borderRadius: '4px',
-                                              fontSize: '11px',
-                                              fontWeight: '500',
-                                              backgroundColor: skill === 'frontend' ? '#f3e8ff' : '#fed7aa',
-                                              color: skill === 'frontend' ? '#7c3aed' : '#ea580c'
-                                            }}
-                                          >
-                                            {skill === 'frontend' ? 'FE' : 'BE'}
-                                          </span>
-                                        ))}
-                                      </div>
-                                      {/* Always show Jira status */}
-                                      <span style={{ 
-                                        color: isCompleted ? '#059669' : '#6b7280', 
-                                        fontWeight: '500' 
-                                      }}>
-                                        {isCompleted ? '✓ ' : ''}{child.jiraStatus || child.status}
-                                      </span>
-                                      {isAssigned && !isCompleted && (
-                                        <span style={{ color: '#2563eb', fontWeight: '500' }}>
-                                          📅 {getSprintName(child.assignedSprints, data.sprints)}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span style={{ 
-                                      fontWeight: '500',
-                                      color: !isCompleted && isBefore(child.requiredCompletionDate, new Date()) ? '#dc2626' : '#6b7280'
-                                    }}>
-                                      Due: {format(child.requiredCompletionDate, 'MMM dd')}
-                                    </span>
-                                  </div>
-                                  {!isDraggable && (
-                                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
-                                      {isCompleted ? 'Cannot assign completed items' : 'Already assigned to a sprint'}
-                                    </div>
-                                  )}
-                                  {!isCompleted && isBefore(child.requiredCompletionDate, new Date()) && (
-                                    <div style={{ 
-                                      fontSize: '11px', 
-                                      color: '#dc2626', 
-                                      marginTop: '4px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '4px'
-                                    }}>
-                                      <AlertTriangle style={{ height: '12px', width: '12px' }} />
-                                      Overdue
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
 
               {/* Information about imported epics */}
               {data.epics.length > 0 && (
@@ -2792,338 +2574,295 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         <div className="w-full lg:w-2/3 flex flex-col">
           <h3 className="text-lg font-semibold mb-6">Sprint Assignments</h3>
           <div className="overflow-y-auto flex-1 pr-2 space-y-6">{/* Added independent scrolling for sprints */}
-          
-          {(() => {
-            console.log('🎨 QUARTER GROUPS RENDER:', {
-              quarterCount: quarterGroups.length,
-              previewActive: autoAssignPreview?.isPreviewActive,
-              totalSprintsInGroups: quarterGroups.reduce((sum, qg) => sum + qg.sprints.length, 0)
-            });
-            return null;
-          })()}
-          {quarterGroups.map(({ quarter, sprints }) => (
-            <div key={quarter} className="space-y-4">
-              {/* Quarter Header */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="h-px bg-gradient-to-r from-blue-300 to-transparent flex-1"></div>
-                <h4 className="text-md font-semibold text-blue-700 bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
-                  {quarter}
-                </h4>
-                <div className="h-px bg-gradient-to-l from-blue-300 to-transparent flex-1"></div>
-              </div>
-              
-              {/* Sprints in this quarter */}
-              <div className="space-y-4 pl-4">
-                {sprints.map(sprint => {
-                  const sprintInfo = sprintData.find(sd => sd.sprint.id === sprint.id);
-                  if (!sprintInfo) return null;
-                  
-                  const { 
-                    assignedItems, 
-                    assignedPoints, 
-                    capacity, 
-                    utilization,
-                    skillCapacities,
-                    frontendPoints,
-                    backendPoints,
-                    frontendUtilization,
-                    backendUtilization
-                  } = sprintInfo;
-                  
-                  return (
-                    <div
-                      key={`${sprint.id}-${autoAssignPreview?.timestamp || 'normal'}`}
-                      data-sprint-id={sprint.id}
-                      onPointerUp={(e) => {
-                        // Always clear drag start on pointer up
-                        setDragStart(null);
-                        
-                        if (draggedItem) {
-                          addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
-                          e.stopPropagation(); // Prevent global pointerup from running too early
-                          
-                          // Mark that this drop was handled by a specific handler
-                          dropHandledRef.current = true;
-                          
-                          const itemToAssign = draggedItem;
-                          
-                          // Assign to sprint (global handler will clean up visual state)
-                          assignItemToSprint(itemToAssign, sprint.id);
-                        }
-                      }}
-                      className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${
-                        (draggedItem && !hideDropZones)
-                          ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200' 
-                          : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
-                      }`}
-                      style={{
-                        minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
-                        position: 'relative',
-                        pointerEvents: 'auto',
-                        zIndex: 10,
-                        cursor: (draggedItem && !hideDropZones) ? 'copy' : 'default'
-                      }}
-                    >
-                      {/* Minimal drop zone indicator when dragging */}
-                      {(draggedItem && !hideDropZones) && (
-                        <div 
-                          className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-20 rounded-lg z-10"
-                          style={{ pointerEvents: 'none' }}
-                        >
-                          <div className="text-blue-600 font-normal text-sm text-center opacity-60">
-                            Drop here
-                          </div>
-                        </div>
-                      )}
 
-                      <div 
-                        className="flex justify-between items-start mb-3 cursor-pointer hover:bg-gray-50 -mx-2 px-2 py-1 rounded transition-colors"
-                        onClick={(e) => {
-                          // Only toggle if not dragging and not clicking on buttons
-                          if (!draggedItem && !e.defaultPrevented) {
-                            e.stopPropagation();
-                            toggleSprintExpansion(sprint.id);
+            {(() => {
+              console.log('🎨 QUARTER GROUPS RENDER:', {
+                quarterCount: quarterGroups.length,
+                previewActive: autoAssignPreview?.isPreviewActive,
+                totalSprintsInGroups: quarterGroups.reduce((sum, qg) => sum + qg.sprints.length, 0)
+              });
+              return null;
+            })()}
+            {quarterGroups.map(({ quarter, sprints }) => (
+              <div key={quarter} className="space-y-4">
+                {/* Quarter Header */}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-px bg-gradient-to-r from-blue-300 to-transparent flex-1"></div>
+                  <h4 className="text-md font-semibold text-blue-700 bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
+                    {quarter}
+                  </h4>
+                  <div className="h-px bg-gradient-to-l from-blue-300 to-transparent flex-1"></div>
+                </div>
+
+                {/* Sprints in this quarter */}
+                <div className="space-y-4 pl-4">
+                  {sprints.map(sprint => {
+                    const sprintInfo = sprintData.find(sd => sd.sprint.id === sprint.id);
+                    if (!sprintInfo) return null;
+
+                    const {
+                      assignedItems,
+                      assignedPoints,
+                      capacity,
+                      utilization,
+                      skillCapacities,
+                      frontendPoints,
+                      backendPoints,
+                      frontendUtilization,
+                      backendUtilization
+                    } = sprintInfo;
+
+                    return (
+                      <div
+                        key={`${sprint.id}-${autoAssignPreview?.timestamp || 'normal'}`}
+                        data-sprint-id={sprint.id}
+                        onPointerUp={(e) => {
+                          // Always clear drag start on pointer up
+                          setDragStart(null);
+
+                          if (draggedItem) {
+                            addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
+                            e.stopPropagation(); // Prevent global pointerup from running too early
+
+                            // Mark that this drop was handled by a specific handler
+                            dropHandledRef.current = true;
+
+                            const itemToAssign = draggedItem;
+
+                            // Assign to sprint (global handler will clean up visual state)
+                            assignItemToSprint(itemToAssign, sprint.id);
                           }
                         }}
+                        className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${(draggedItem && !hideDropZones)
+                            ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200'
+                            : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
+                          }`}
+                        style={{
+                          minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
+                          position: 'relative',
+                          pointerEvents: 'auto',
+                          zIndex: 10,
+                          cursor: (draggedItem && !hideDropZones) ? 'copy' : 'default'
+                        }}
                       >
-                        <div className="flex items-center gap-2 flex-1">
-                          {/* Expand/Collapse Icon */}
-                          {expandedSprints.has(sprint.id) ? (
-                            <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                          )}
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-semibold">{sprint.name}</h4>
-                              {sprint.status === 'completed' && (
-                                <span className="px-2 py-1 bg-green-100 text-green-600 text-xs rounded-full">
-                                  Completed
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-gray-600">
-                              {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3">
-                          <div className="text-right">
-                            <div className={`font-semibold ${getUtilizationColor(
-                              (assignedPoints / sprint.plannedVelocity) * 100
-                            )}`}>
-                              {((assignedPoints / sprint.plannedVelocity) * 100).toFixed(0)}% utilized
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {assignedPoints} / {sprint.plannedVelocity} pts
-                            </div>
-                          </div>
-                          {/* Complete Sprint button for active sprints */}
-                          {(!sprint.status || sprint.status !== 'completed') && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                completeSprint(sprint.id);
-                              }}
-                              className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-md transition-colors"
-                              title={`Mark sprint "${sprint.name}" as completed`}
-                            >
-                              <CheckCircle className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Collapsible sprint content */}
-                      {expandedSprints.has(sprint.id) && (
-                        <div className="space-y-3 transition-all duration-200">
-                          {/* Skill-specific capacity */}
-                          <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
-                        <div className="bg-purple-50 p-2 rounded">
-                          <div className="font-medium text-purple-800">Frontend</div>
-                          <div className={`${getUtilizationColor(frontendUtilization)}`}>
-                            {frontendUtilization.toFixed(0)}% ({frontendPoints} / {skillCapacities.frontend.toFixed(1)} pts)
-                          </div>
-                        </div>
-                        <div className="bg-orange-50 p-2 rounded">
-                          <div className="font-medium text-orange-800">Backend</div>
-                          <div className={`${getUtilizationColor(backendUtilization)}`}>
-                            {backendUtilization.toFixed(0)}% ({backendPoints} / {skillCapacities.backend.toFixed(1)} pts)
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Capacity bar */}
-                      <div className="mb-3">
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div 
-                            className={`h-2 rounded-full transition-all duration-300 ${getCapacityBarColor(utilization)}`}
-                            style={{ width: `${Math.min(utilization, 100)}%` }}
-                          />
-                        </div>
-                        {utilization > 100 && (
-                          <div className="text-xs text-red-600 mt-1">
-                            Over capacity by {(assignedPoints - capacity).toFixed(1)} points
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Assigned items */}
-                      <div className="space-y-2">
-                        {(() => {
-                          // DEBUG: Log what this specific sprint card is rendering
-                          console.log(`🎨 RENDERING Sprint ${sprint.name}:`, {
-                            sprintId: sprint.id,
-                            assignedItemsLength: assignedItems.length,
-                            assignedItemsIds: assignedItems.map(i => i.id),
-                            previewActive: autoAssignPreview?.isPreviewActive,
-                            timestamp: autoAssignPreview?.timestamp
-                          });
-                          return null;
-                        })()}
-                        {assignedItems.length === 0 ? (
-                          <div 
-                            className="text-gray-500 text-sm italic py-2 text-center border-2 border-dashed border-gray-200 rounded"
+                        {/* Minimal drop zone indicator when dragging */}
+                        {(draggedItem && !hideDropZones) && (
+                          <div
+                            className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-20 rounded-lg z-10"
                             style={{ pointerEvents: 'none' }}
                           >
-                            Drop work items here or click Auto-Assign
+                            <div className="text-blue-600 font-normal text-sm text-center opacity-60">
+                              Drop here
+                            </div>
                           </div>
-                        ) : (
-                          (() => {
-                            // Group work items by epic
-                            const groupedItems = groupWorkItemsByEpic(assignedItems);
-                            
-                            return (
-                              <div className="space-y-2">
-                                {Object.entries(groupedItems).map(([epicKey, items]) => {
-                                  const isNoEpicGroup = epicKey === '__no_epic__';
-                                  const epicColor = isNoEpicGroup ? DEFAULT_WORK_ITEM_COLOR : getWorkItemColor({ epicId: epicKey });
-                                  
-                                  return (
-                                    <div key={epicKey} className="space-y-1">
-                                      {/* Epic header (only for items that belong to an epic) */}
-                                      {!isNoEpicGroup && (
-                                        <div className={`px-2 py-1 rounded-t text-xs font-medium ${epicColor.label} border-l-4 ${epicColor.border}`}>
-                                          📋 {getEpicTitle(epicKey, data.workItems)} ({items.length} item{items.length !== 1 ? 's' : ''})
-                                        </div>
-                                      )}
-                                      
-                                      {/* Work items in this epic group */}
-                                      {items.map(item => {
-                                        const itemColor = getWorkItemColor(item);
-                                        
-                                        return (
-                                          <div 
-                                            key={item.id} 
-                                            className={`flex justify-between items-center p-2 rounded text-sm border ${
-                                              highlightedTicket && item.jiraId === highlightedTicket 
-                                                ? 'bg-yellow-100 border-2 border-yellow-400 shadow-lg' 
-                                                : `${itemColor.background} ${itemColor.border}`
-                                            }`}
-                                          >
-                                            <div className="flex items-center gap-2">
-                                              <div>
-                                                {item.jiraId ? (
-                                                  <span className="font-medium">
-                                                    <a 
-                                                      href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className={`hover:underline inline-flex items-center gap-1 ${
-                                                        highlightedTicket && item.jiraId === highlightedTicket 
-                                                          ? 'text-yellow-800' 
-                                                          : itemColor.text
-                                                      }`}
-                                                      onClick={(e) => e.stopPropagation()}
-                                                    >
-                                                      {item.jiraId}
-                                                      <ExternalLink className="h-3 w-3" />
-                                                    </a>
-                                                    <span className="ml-1 text-gray-700">- {item.title}</span>
-                                                  </span>
-                                                ) : (
-                                                  <span className={`font-medium ${itemColor.text}`}>{item.title}</span>
-                                                )}
-                                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                                                {/* Always show current Jira status */}
-                                                <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-                                                  item.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                                                  item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                                  'bg-gray-100 text-gray-800'
-                                                }`}>
-                                                  {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
-                                                </span>
-                                              </div>
-                                              {/* Show priority for epic items or epic children */}
-                                              {(item.isEpic || item.epicId) && (
-                                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
-                                                  item.isEpic 
-                                                    ? (item.priority || 'Medium')
-                                                    : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                                )}`}>
-                                                  {item.isEpic 
-                                                    ? (item.priority || 'Medium')
-                                                    : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                                  }
-                                                </span>
-                                              )}
-                                            </div>
-                                            <button
-                                              onClick={(e) => {
-                                                console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                removeItemFromSprint(item.id, sprint.id);
-                                              }}
-                                              onPointerDown={(e) => {
-                                                // Prevent any pointer events from triggering drag
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                              }}
-                                              onPointerUp={(e) => {
-                                                // Prevent any pointer events from triggering drag
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                              }}
-                                              className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                                              style={{ pointerEvents: 'auto', zIndex: 1000 }}
-                                            >
-                                              Remove
-                                            </button>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  );
-                                })}
+                        )}
+
+                        <div
+                          className="flex justify-between items-start mb-3 cursor-pointer hover:bg-gray-50 -mx-2 px-2 py-1 rounded transition-colors"
+                          onClick={(e) => {
+                            // Only toggle if not dragging and not clicking on buttons
+                            if (!draggedItem && !e.defaultPrevented) {
+                              e.stopPropagation();
+                              toggleSprintExpansion(sprint.id);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-2 flex-1">
+                            {/* Expand/Collapse Icon */}
+                            {expandedSprints.has(sprint.id) ? (
+                              <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                            )}
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-semibold">{sprint.name}</h4>
+                                {sprint.status === 'completed' && (
+                                  <span className="px-2 py-1 bg-green-100 text-green-600 text-xs rounded-full">
+                                    Completed
+                                  </span>
+                                )}
                               </div>
-                            );
-                          })()
+                              <p className="text-sm text-gray-600">
+                                {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <div className="text-right">
+                              <div className={`font-semibold ${getUtilizationColor(
+                                (assignedPoints / sprint.plannedVelocity) * 100
+                              )}`}>
+                                {((assignedPoints / sprint.plannedVelocity) * 100).toFixed(0)}% utilized
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                {assignedPoints} / {sprint.plannedVelocity} pts
+                              </div>
+                            </div>
+                            {/* Complete Sprint button for active sprints */}
+                            {(!sprint.status || sprint.status !== 'completed') && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  completeSprint(sprint.id);
+                                }}
+                                className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-md transition-colors"
+                                title={`Mark sprint "${sprint.name}" as completed`}
+                              >
+                                <CheckCircle className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Collapsible sprint content */}
+                        {expandedSprints.has(sprint.id) && (
+                          <div className="space-y-3 transition-all duration-200">
+                            {/* Skill-specific capacity */}
+                            <div className="mb-3 grid grid-cols-2 gap-4 text-xs">
+                              <div className="bg-purple-50 p-2 rounded">
+                                <div className="font-medium text-purple-800">Frontend</div>
+                                <div className={`${getUtilizationColor(frontendUtilization)}`}>
+                                  {frontendUtilization.toFixed(0)}% ({frontendPoints} / {skillCapacities.frontend.toFixed(1)} pts)
+                                </div>
+                              </div>
+                              <div className="bg-orange-50 p-2 rounded">
+                                <div className="font-medium text-orange-800">Backend</div>
+                                <div className={`${getUtilizationColor(backendUtilization)}`}>
+                                  {backendUtilization.toFixed(0)}% ({backendPoints} / {skillCapacities.backend.toFixed(1)} pts)
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Capacity bar */}
+                            <div className="mb-3">
+                              <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full transition-all duration-300 ${getCapacityBarColor(utilization)}`}
+                                  style={{ width: `${Math.min(utilization, 100)}%` }}
+                                />
+                              </div>
+                              {utilization > 100 && (
+                                <div className="text-xs text-red-600 mt-1">
+                                  Over capacity by {(assignedPoints - capacity).toFixed(1)} points
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Assigned items */}
+                            <div className="space-y-2">
+                              {(() => {
+                                // DEBUG: Log what this specific sprint card is rendering
+                                console.log(`🎨 RENDERING Sprint ${sprint.name}:`, {
+                                  sprintId: sprint.id,
+                                  assignedItemsLength: assignedItems.length,
+                                  assignedItemsIds: assignedItems.map(i => i.id),
+                                  previewActive: autoAssignPreview?.isPreviewActive,
+                                  timestamp: autoAssignPreview?.timestamp
+                                });
+                                return null;
+                              })()}
+                              {assignedItems.length === 0 ? (
+                                <div
+                                  className="text-gray-500 text-sm italic py-2 text-center border-2 border-dashed border-gray-200 rounded"
+                                  style={{ pointerEvents: 'none' }}
+                                >
+                                  Drop work items here or click Auto-Assign
+                                </div>
+                              ) : (
+                                assignedItems.map(item => (
+                                  <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div>
+                                        {item.jiraId ? (
+                                          <span className="font-medium">
+                                            <a
+                                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              {item.jiraId}
+                                              <ExternalLink className="h-3 w-3" />
+                                            </a>
+                                            <span className="ml-1">- {item.title}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="font-medium">{item.title}</span>
+                                        )}
+                                        <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                        {/* Always show current Jira status */}
+                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                            item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                              'bg-gray-100 text-gray-800'
+                                          }`}>
+                                          {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                        </span>
+                                      </div>
+                                      {/* Show priority for epic items or epic children */}
+                                      {(item.isEpic || item.epicId) && (
+                                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
+                                          item.isEpic
+                                            ? (item.priority || 'Medium')
+                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                        )}`}>
+                                          {item.isEpic
+                                            ? (item.priority || 'Medium')
+                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                          }
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        removeItemFromSprint(item.id, sprint.id);
+                                      }}
+                                      onPointerDown={(e) => {
+                                        // Prevent any pointer events from triggering drag
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      onPointerUp={(e) => {
+                                        // Prevent any pointer events from triggering drag
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                      style={{ pointerEvents: 'auto', zIndex: 1000 }}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Warnings */}
+                            {utilization > 100 && (
+                              <div className="mt-3 p-2 bg-red-50 text-red-800 rounded flex items-center gap-2 text-sm">
+                                <AlertTriangle className="h-4 w-4" />
+                                Sprint is over-allocated. Consider moving items to later sprints.
+                              </div>
+                            )}
+
+                            {utilization < 70 && assignedItems.length > 0 && (
+                              <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 rounded flex items-center gap-2 text-sm">
+                                <AlertTriangle className="h-4 w-4" />
+                                Sprint has available capacity. Consider adding more items.
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
-
-                      {/* Warnings */}
-                      {utilization > 100 && (
-                        <div className="mt-3 p-2 bg-red-50 text-red-800 rounded flex items-center gap-2 text-sm">
-                          <AlertTriangle className="h-4 w-4" />
-                          Sprint is over-allocated. Consider moving items to later sprints.
-                        </div>
-                      )}
-                      
-                      {utilization < 70 && assignedItems.length > 0 && (
-                        <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 rounded flex items-center gap-2 text-sm">
-                          <AlertTriangle className="h-4 w-4" />
-                          Sprint has available capacity. Consider adding more items.
-                        </div>
-                      )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
           </div>
         </div>
       </div>

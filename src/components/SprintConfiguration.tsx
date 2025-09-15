@@ -149,13 +149,38 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
       setTimeout(() => setUpdateMessage(''), 3000);
     } catch (error) {
       console.error('Error updating configuration:', error);
-      // Check if it's a regeneration conflict
-      if (error && typeof error === 'object' && 'message' in error && 
-          typeof error.message === 'string' && error.message.includes('regeneration is already in progress')) {
-        setUpdateMessage('⚠️ Sprint regeneration is already in progress. Please wait...');
+      
+      // Enhanced error handling with detailed logging
+      let errorMessage = 'Failed to update configuration. Please try again.';
+      
+      if (error instanceof Error) {
+        console.error('❌ Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+        
+        // Check if it's a regeneration conflict
+        if (error.message.includes('regeneration is already in progress')) {
+          errorMessage = '⚠️ Sprint regeneration is already in progress. Please wait...';
+        } else {
+          errorMessage = `❌ ${error.message}`;
+        }
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        const msg = String(error.message);
+        console.error('❌ Object error:', error);
+        
+        if (msg.includes('regeneration is already in progress')) {
+          errorMessage = '⚠️ Sprint regeneration is already in progress. Please wait...';
+        } else {
+          errorMessage = `❌ ${msg}`;
+        }
       } else {
-        setUpdateMessage('❌ Failed to update configuration. Please try again.');
+        console.error('❌ Unknown error type:', typeof error, error);
+        errorMessage = '❌ An unexpected error occurred. Please try again.';
       }
+      
+      setUpdateMessage(errorMessage);
       setTimeout(() => setUpdateMessage(''), 5000);
     } finally {
       setIsUpdating(false);
@@ -211,11 +236,28 @@ export const SprintConfiguration: React.FC<SprintConfigurationProps> = ({
       }, 2000);
 
     } catch (error) {
+      console.error('Failed to save sprint velocity:', error);
+      
+      // Enhanced error handling
+      let errorMessage = 'Failed to save velocity';
+      if (error instanceof Error) {
+        errorMessage = `Failed to save velocity: ${error.message}`;
+        console.error('❌ Velocity save error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        errorMessage = `Failed to save velocity: ${String(error.message)}`;
+        console.error('❌ Velocity save object error:', error);
+      } else {
+        console.error('❌ Unknown velocity save error type:', typeof error, error);
+      }
+      
       setVelocitySaveMessages(prev => ({
         ...prev,
-        [sprintId]: 'Failed to save velocity'
+        [sprintId]: errorMessage
       }));
-      console.error('Failed to save sprint velocity:', error);
     } finally {
       setSavingVelocity(prev => ({ ...prev, [sprintId]: false }));
     }
