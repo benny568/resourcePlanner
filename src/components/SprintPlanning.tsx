@@ -153,11 +153,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log('🎯 NEW Drag and Drop System Initialized');
   }, []);
 
-  // Global pointer handlers for cleanup (simplified and less aggressive)
+  // Global pointer handlers for cleanup (scroll-friendly with throttling)
   React.useEffect(() => {
+    let throttleTimeout: NodeJS.Timeout | null = null;
+    
     const handleGlobalPointerMove = (e: PointerEvent) => {
-      // Check if we should start dragging based on mouse movement
+      // Only handle drag logic if we have a drag start and no active drag yet
       if (dragStart && !draggedItem) {
+        // Throttle to reduce interference with scrolling
+        if (throttleTimeout) return;
+        
+        throttleTimeout = setTimeout(() => {
+          throttleTimeout = null;
+        }, 16); // ~60fps throttling
+        
         const distance = Math.sqrt(
           Math.pow(e.clientX - dragStart.x, 2) +
           Math.pow(e.clientY - dragStart.y, 2)
@@ -180,6 +189,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           }
         }
       }
+      // IMPORTANT: Don't preventDefault here to allow natural scrolling
     };
 
     const handleGlobalPointerUp = () => {
@@ -241,15 +251,21 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       }
     };
 
-    // Add all pointer event handlers
-    document.addEventListener('pointermove', handleGlobalPointerMove);
+    // Add all pointer event handlers with passive option to allow smooth scrolling
+    document.addEventListener('pointermove', handleGlobalPointerMove, { passive: true });
     document.addEventListener('pointerup', handleGlobalPointerUp);
     window.addEventListener('blur', handleWindowLeave); // Window loses focus
 
     return () => {
+      // Cleanup event listeners
       document.removeEventListener('pointermove', handleGlobalPointerMove);
       document.removeEventListener('pointerup', handleGlobalPointerUp);
       window.removeEventListener('blur', handleWindowLeave);
+      
+      // Clear any pending throttle timeout
+      if (throttleTimeout) {
+        clearTimeout(throttleTimeout);
+      }
     };
   }, [dragStart, draggedItem]); // Add dependencies for drag state
 
