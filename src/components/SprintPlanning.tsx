@@ -2770,74 +2770,169 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   Drop work items here or click Auto-Assign
                                 </div>
                               ) : (
-                                assignedItems.map(item => (
-                                  <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <div>
-                                        {item.jiraId ? (
-                                          <span className="font-medium">
-                                            <a
-                                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                              onClick={(e) => e.stopPropagation()}
+                                <div className="space-y-2">
+                                  {(() => {
+                                    // Group items by their epic, even if epic is not in sprint
+                                    const epicGroups: Record<string, WorkItem[]> = {};
+                                    const standalone: WorkItem[] = [];
+                                    
+                                    assignedItems.forEach(item => {
+                                      if (item.epicId) {
+                                        if (!epicGroups[item.epicId]) {
+                                          epicGroups[item.epicId] = [];
+                                        }
+                                        epicGroups[item.epicId].push(item);
+                                      } else {
+                                        standalone.push(item);
+                                      }
+                                    });
+
+                                    return (
+                                      <div className="space-y-2">
+                                        {/* Epic groups */}
+                                        {Object.entries(epicGroups).map(([epicId, items]) => {
+                                          const epic = data.workItems.find(wi => wi.id === epicId && wi.isEpic);
+                                          const epicTitle = epic ? epic.title : `Epic ${epicId}`;
+                                          const epicJiraId = epic ? epic.jiraId : null;
+                                          const isExpanded = expandedEpics.has(epicId);
+                                          
+                                          return (
+                                            <div key={epicId} className="border rounded-lg bg-indigo-50 border-indigo-200">
+                                              <div
+                                                className="p-2 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
+                                                onClick={() => toggleEpicExpansion(epicId)}
+                                              >
+                                                {isExpanded ? (
+                                                  <ChevronDown className="h-4 w-4 text-indigo-600" />
+                                                ) : (
+                                                  <ChevronRight className="h-4 w-4 text-indigo-600" />
+                                                )}
+                                                <div className="flex-1">
+                                                  <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
+                                                    {epicJiraId ? (
+                                                      <span>
+                                                        <a
+                                                          href={`https://cvs-hcd.atlassian.net/browse/${epicJiraId}`}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          className="text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-1"
+                                                          onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                          {epicJiraId}
+                                                          <ExternalLink className="h-3 w-3" />
+                                                        </a>
+                                                        <span className="ml-1">- {epicTitle}</span>
+                                                      </span>
+                                                    ) : (
+                                                      <span>{epicTitle}</span>
+                                                    )}
+                                                    <span className="text-xs text-indigo-600">
+                                                      {items.length} {items.length === 1 ? 'item' : 'items'}
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              
+                                              {/* Epic children */}
+                                              {isExpanded && (
+                                                <div className="border-t border-indigo-200 p-2 space-y-1">
+                                                  {items.map(child => (
+                                                    <div key={child.id} className="flex justify-between items-center p-2 bg-white border-l-2 border-indigo-200 ml-4 rounded text-sm">
+                                                      <div className="flex items-center gap-2">
+                                                        <div>
+                                                          {child.jiraId ? (
+                                                            <span className="font-medium">
+                                                              <a
+                                                                href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                              >
+                                                                {child.jiraId}
+                                                                <ExternalLink className="h-3 w-3" />
+                                                              </a>
+                                                              <span className="ml-1">- {child.title}</span>
+                                                            </span>
+                                                          ) : (
+                                                            <span className="font-medium">{child.title}</span>
+                                                          )}
+                                                          <span className="ml-2 text-gray-600">({child.estimateStoryPoints} pts)</span>
+                                                          <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${child.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                                              child.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                                                'bg-gray-100 text-gray-800'
+                                                            }`}>
+                                                            {child.status === 'Completed' ? '✓ ' : ''}{child.jiraStatus || child.status}
+                                                          </span>
+                                                        </div>
+                                                      </div>
+                                                      <button
+                                                        onClick={(e) => {
+                                                          console.log(`🗑️ REMOVE CLICKED: ${child.id} from ${sprint.id}`);
+                                                          e.preventDefault();
+                                                          e.stopPropagation();
+                                                          removeItemFromSprint(child.id, sprint.id);
+                                                        }}
+                                                        className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                                      >
+                                                        Remove
+                                                      </button>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                        
+                                        {/* Standalone items */}
+                                        {standalone.map(item => (
+                                          <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
+                                            <div className="flex items-center gap-2">
+                                              <div>
+                                                {item.jiraId ? (
+                                                  <span className="font-medium">
+                                                    <a
+                                                      href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      {item.jiraId}
+                                                      <ExternalLink className="h-3 w-3" />
+                                                    </a>
+                                                    <span className="ml-1">- {item.title}</span>
+                                                  </span>
+                                                ) : (
+                                                  <span className="font-medium">{item.title}</span>
+                                                )}
+                                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                                <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                                      'bg-gray-100 text-gray-800'
+                                                  }`}>
+                                                  {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            <button
+                                              onClick={(e) => {
+                                                console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                removeItemFromSprint(item.id, sprint.id);
+                                              }}
+                                              className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
                                             >
-                                              {item.jiraId}
-                                              <ExternalLink className="h-3 w-3" />
-                                            </a>
-                                            <span className="ml-1">- {item.title}</span>
-                                          </span>
-                                        ) : (
-                                          <span className="font-medium">{item.title}</span>
-                                        )}
-                                        <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                                        {/* Always show current Jira status */}
-                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                                            item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                              'bg-gray-100 text-gray-800'
-                                          }`}>
-                                          {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
-                                        </span>
+                                              Remove
+                                            </button>
+                                          </div>
+                                        ))}
                                       </div>
-                                      {/* Show priority for epic items or epic children */}
-                                      {(item.isEpic || item.epicId) && (
-                                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
-                                          item.isEpic
-                                            ? (item.priority || 'Medium')
-                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                        )}`}>
-                                          {item.isEpic
-                                            ? (item.priority || 'Medium')
-                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                          }
-                                        </span>
-                                      )}
-                                    </div>
-                                    <button
-                                      onClick={(e) => {
-                                        console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        removeItemFromSprint(item.id, sprint.id);
-                                      }}
-                                      onPointerDown={(e) => {
-                                        // Prevent any pointer events from triggering drag
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                      }}
-                                      onPointerUp={(e) => {
-                                        // Prevent any pointer events from triggering drag
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                      }}
-                                      className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                                      style={{ pointerEvents: 'auto', zIndex: 1000 }}
-                                    >
-                                      Remove
-                                    </button>
-                                  </div>
-                                ))
+                                    );
+                                  })()}
+                                </div>
                               )}
                             </div>
 
