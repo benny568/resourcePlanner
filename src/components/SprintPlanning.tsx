@@ -38,7 +38,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number, y: number, itemId: string } | null>(null);
-  const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
+  const [expandedEpicsUnassigned, setExpandedEpicsUnassigned] = useState<Set<string>>(new Set());
+  const [expandedEpicsSprint, setExpandedEpicsSprint] = useState<Set<string>>(new Set());
   // Initialize all sprints as collapsed by default
   const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
@@ -252,18 +253,32 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     };
   }, [dragStart, draggedItem]); // Add dependencies for drag state
 
-  // Toggle epic expansion
-  const toggleEpicExpansion = (epicId: string) => {
-    const newExpanded = new Set(expandedEpics);
+  // Toggle epic expansion in unassigned section
+  const toggleEpicExpansionUnassigned = (epicId: string) => {
+    const newExpanded = new Set(expandedEpicsUnassigned);
     if (newExpanded.has(epicId)) {
       newExpanded.delete(epicId);
-      console.log(`🔽 COLLAPSING EPIC: ${epicId}`);
+      console.log(`🔽 COLLAPSING UNASSIGNED EPIC: ${epicId}`);
     } else {
       newExpanded.add(epicId);
-      console.log(`🔼 EXPANDING EPIC: ${epicId}`);
+      console.log(`🔼 EXPANDING UNASSIGNED EPIC: ${epicId}`);
     }
-    setExpandedEpics(newExpanded);
-    console.log(`📋 EXPANDED EPICS:`, Array.from(newExpanded));
+    setExpandedEpicsUnassigned(newExpanded);
+    console.log(`📋 EXPANDED UNASSIGNED EPICS:`, Array.from(newExpanded));
+  };
+
+  // Toggle epic expansion in sprint section
+  const toggleEpicExpansionSprint = (epicId: string) => {
+    const newExpanded = new Set(expandedEpicsSprint);
+    if (newExpanded.has(epicId)) {
+      newExpanded.delete(epicId);
+      console.log(`🔽 COLLAPSING SPRINT EPIC: ${epicId}`);
+    } else {
+      newExpanded.add(epicId);
+      console.log(`🔼 EXPANDING SPRINT EPIC: ${epicId}`);
+    }
+    setExpandedEpicsSprint(newExpanded);
+    console.log(`📋 EXPANDED SPRINT EPICS:`, Array.from(newExpanded));
   };
 
   // Toggle sprint expansion
@@ -2314,10 +2329,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                     className="p-3 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
                     onClick={() => {
                       console.log(`🖱️ EPIC HEADER CLICKED: ${epic.id}`);
-                      toggleEpicExpansion(epic.id);
+                      toggleEpicExpansionUnassigned(epic.id);
                     }}
                   >
-                    {expandedEpics.has(epic.id) ? (
+                    {expandedEpicsUnassigned.has(epic.id) ? (
                       <ChevronDown className="h-4 w-4 text-indigo-600" />
                     ) : (
                       <ChevronRight className="h-4 w-4 text-indigo-600" />
@@ -2366,7 +2381,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
 
                   {/* Epic Children (when expanded) */}
-                  {expandedEpics.has(epic.id) && epic.children && (
+                  {expandedEpicsUnassigned.has(epic.id) && epic.children && (
                     <div style={{
                       maxHeight: '300px',
                       width: '100%',
@@ -2794,13 +2809,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                           const epic = data.workItems.find(wi => wi.id === epicId && wi.isEpic);
                                           const epicTitle = epic ? epic.title : `Epic ${epicId}`;
                                           const epicJiraId = epic ? epic.jiraId : null;
-                                          const isExpanded = expandedEpics.has(epicId);
+                                          const isExpanded = expandedEpicsSprint.has(epicId);
                                           
                                           return (
                                             <div key={epicId} className="border rounded-lg bg-indigo-50 border-indigo-200">
                                               <div
                                                 className="p-2 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
-                                                onClick={() => toggleEpicExpansion(epicId)}
+                                                onClick={() => toggleEpicExpansionSprint(epicId)}
                                               >
                                                 {isExpanded ? (
                                                   <ChevronDown className="h-4 w-4 text-indigo-600" />
