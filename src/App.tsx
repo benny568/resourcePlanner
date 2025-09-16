@@ -199,11 +199,12 @@ function App() {
           });
           
           // Create a map of existing sprints by ID for quick lookup
-          const existingSprintsMap = new Map(currentBackendSprints.map(sprint => [sprint.id, sprint]));
+          const existingSprintsMap: Record<string, any> = {};
+          currentBackendSprints.forEach(sprint => existingSprintsMap[sprint.id] = sprint);
           
           // Process each sprint in the new array
           for (const sprint of sprints) {
-            const existingSprint = existingSprintsMap.get(sprint.id);
+            const existingSprint = existingSprintsMap[sprint.id];
             
             console.log(`🔍 Processing sprint ${sprint.id}:`, {
               exists: !!existingSprint,
@@ -277,14 +278,16 @@ function App() {
         const currentBackendHolidays = await holidaysApi.getAll();
         
         // Create a map of existing holidays by ID for quick lookup
-        const existingHolidaysMap = new Map(currentBackendHolidays.map(holiday => [holiday.id, holiday]));
+        const existingHolidaysMap: Record<string, any> = {};
+        currentBackendHolidays.forEach(holiday => existingHolidaysMap[holiday.id] = holiday);
         
         // Create a map of new holidays by ID
-        const newHolidaysMap = new Map(publicHolidays.map(holiday => [holiday.id, holiday]));
+        const newHolidaysMap: Record<string, any> = {};
+        publicHolidays.forEach(holiday => newHolidaysMap[holiday.id] = holiday);
         
         // Delete holidays that no longer exist in the new array
         for (const existingHoliday of currentBackendHolidays) {
-          if (!newHolidaysMap.has(existingHoliday.id)) {
+          if (!(existingHoliday.id in newHolidaysMap)) {
             console.log(`🗑️ Deleting holiday: ${existingHoliday.id}`);
             await holidaysApi.delete(existingHoliday.id);
           }
@@ -292,7 +295,7 @@ function App() {
         
         // Process each holiday in the new array
         for (const holiday of publicHolidays) {
-          const existingHoliday = existingHolidaysMap.get(holiday.id);
+          const existingHoliday = existingHolidaysMap[holiday.id];
           
           if (existingHoliday) {
             // Check if holiday needs updating
