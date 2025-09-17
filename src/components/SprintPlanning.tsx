@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
 import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
@@ -38,6 +38,49 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number, y: number, itemId: string } | null>(null);
+  
+  // Refs to access current drag state in global handlers (avoid stale closures)
+  const draggedItemRef = useRef<string | null>(null);
+  const dragStartRef = useRef<{ x: number, y: number, itemId: string } | null>(null);
+  
+  // Force visual cleanup function
+  const forceCleanupVisualState = () => {
+    console.log('🧹 MANUAL CLEANUP: Forcing visual state cleanup');
+    
+    // Clear React state
+    setDraggedItem(null);
+    setDragStart(null);
+    setHideDropZones(false);
+    
+    // Clear DOM styling
+    document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+      htmlEl.classList.add('border', 'border-gray-200');
+      htmlEl.style.minHeight = 'auto';
+      htmlEl.style.cursor = 'default';
+    });
+    
+    // Reset dragged item visual effects
+    document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
+      el.style.opacity = '1';
+      el.style.transform = 'scale(1)';
+      el.style.pointerEvents = 'auto';
+    });
+    
+    // Reset body cursor
+    document.body.style.cursor = 'default';
+  };
+  
+  // Keep refs updated
+  React.useEffect(() => {
+    draggedItemRef.current = draggedItem;
+  }, [draggedItem]);
+  
+  React.useEffect(() => {
+    dragStartRef.current = dragStart;
+  }, [dragStart]);
+  
   const [expandedEpicsUnassigned, setExpandedEpicsUnassigned] = useState<Set<string>>(new Set());
   const [expandedEpicsSprint, setExpandedEpicsSprint] = useState<Set<string>>(new Set());
   // Initialize all sprints as collapsed by default
@@ -148,126 +191,63 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     }
   };
 
-  // Initialize drag and drop system  
+  // Manual cleanup function with detailed debugging
+  const clearDragState = () => {
+    console.log('🧹 MANUAL CLEANUP STARTING: Current state:', {
+      draggedItem,
+      dragStart,
+      hideDropZones
+    });
+    
+    setDraggedItem(null);
+    setDragStart(null);
+    setHideDropZones(false);
+    
+    console.log('🧹 React state cleared, now cleaning DOM...');
+    
+    // Force immediate visual cleanup
+    const sprintElements = document.querySelectorAll('[data-sprint-id]');
+    console.log(`🧹 Found ${sprintElements.length} sprint elements to clean`);
+    
+    sprintElements.forEach((el, index) => {
+      const htmlEl = el as HTMLElement;
+      const hadBlueClasses = htmlEl.classList.contains('border-blue-300');
+      
+      htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+      htmlEl.classList.add('border', 'border-gray-200');
+      htmlEl.style.cursor = 'default';
+      
+      if (hadBlueClasses) {
+        console.log(`🧹 Cleaned element ${index} - removed blue classes`);
+      }
+    });
+    
+    console.log('🧹 MANUAL CLEANUP COMPLETED');
+  };
+
+  // Add escape key to clear drag state
   React.useEffect(() => {
-    console.log('🎯 NEW Drag and Drop System Initialized');
+    const handleKeyDown = (e: KeyboardEvent) => {
+      console.log(`⌨️ KEY DOWN: ${e.key}`);
+      if (e.key === 'Escape') {
+        console.log('🚨 ESCAPE KEY PRESSED: About to clear drag state');
+        clearDragState();
+      }
+    };
+    
+    console.log('📎 ADDING ESCAPE KEY LISTENER');
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      console.log('📎 REMOVING ESCAPE KEY LISTENER');
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [clearDragState]);
+
+  // Simple drag and drop system 
+  React.useEffect(() => {
+    console.log('🎯 Drag and Drop System Initialized');
   }, []);
 
-  // Global pointer handlers for cleanup (scroll-friendly with throttling)
-  React.useEffect(() => {
-    let throttleTimeout: NodeJS.Timeout | null = null;
-    
-    const handleGlobalPointerMove = (e: PointerEvent) => {
-      // Only handle drag logic if we have a drag start and no active drag yet
-      if (dragStart && !draggedItem) {
-        // Throttle to reduce interference with scrolling
-        if (throttleTimeout) return;
-        
-        throttleTimeout = setTimeout(() => {
-          throttleTimeout = null;
-        }, 16); // ~60fps throttling
-        
-        const distance = Math.sqrt(
-          Math.pow(e.clientX - dragStart.x, 2) +
-          Math.pow(e.clientY - dragStart.y, 2)
-        );
-
-        console.log(`↔️ POINTER MOVE: Distance ${distance.toFixed(1)}px from start`);
-
-        // Start drag when mouse moves more than 5 pixels
-        if (distance > 5) {
-          console.log(`🎯 DRAGGING: Starting drag for item "${dragStart.itemId}"`);
-          setDraggedItem(dragStart.itemId);
-          setHideDropZones(false);
-
-          // Apply visual effects to the dragged item
-          const draggedElement = document.querySelector(`[data-item-id="${dragStart.itemId}"]`) as HTMLElement;
-          if (draggedElement) {
-            draggedElement.style.opacity = '0.7';
-            draggedElement.style.transform = 'scale(0.98)';
-            draggedElement.style.pointerEvents = 'none';
-          }
-        }
-      }
-      // IMPORTANT: Don't preventDefault here to allow natural scrolling
-    };
-
-    const handleGlobalPointerUp = () => {
-      console.log(`🔼 POINTER UP: dragStart=${!!dragStart}, draggedItem=${!!draggedItem}`);
-
-      // Always cleanup drag start state
-      setDragStart(null);
-
-      // Only cleanup if no specific handler already handled the drop
-      if (draggedItem && !dropHandledRef.current) {
-        console.log('🔄 Global pointer up - resetting drag state');
-
-        // Remove blue border from ALL sprint containers immediately
-        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
-          const htmlEl = el as HTMLElement;
-          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-          htmlEl.classList.add('border', 'border-gray-200');
-          htmlEl.style.minHeight = 'auto';
-          htmlEl.style.cursor = 'default';
-        });
-
-        setDraggedItem(null);
-        setHideDropZones(false);
-
-        // Reset any stuck visual states
-        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-          el.style.opacity = '1';
-          el.style.transform = 'scale(1)';
-          el.style.pointerEvents = 'auto';
-        });
-      }
-      // Reset the flag for next drag operation
-      dropHandledRef.current = false;
-    };
-
-    const handleWindowLeave = () => {
-      // Only cancel drag when actually leaving the browser window
-      if (draggedItem) {
-        console.log('🔄 Window left: resetting drag state');
-
-        // Remove blue border from ALL sprint containers immediately
-        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
-          const htmlEl = el as HTMLElement;
-          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-          htmlEl.classList.add('border', 'border-gray-200');
-          htmlEl.style.minHeight = 'auto';
-          htmlEl.style.cursor = 'default';
-        });
-
-        setDraggedItem(null);
-        setDragStart(null);
-        setHideDropZones(false);
-
-        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-          el.style.opacity = '1';
-          el.style.transform = 'scale(1)';
-          el.style.pointerEvents = 'auto';
-        });
-      }
-    };
-
-    // Add all pointer event handlers with passive option to allow smooth scrolling
-    document.addEventListener('pointermove', handleGlobalPointerMove, { passive: true });
-    document.addEventListener('pointerup', handleGlobalPointerUp);
-    window.addEventListener('blur', handleWindowLeave); // Window loses focus
-
-    return () => {
-      // Cleanup event listeners
-      document.removeEventListener('pointermove', handleGlobalPointerMove);
-      document.removeEventListener('pointerup', handleGlobalPointerUp);
-      window.removeEventListener('blur', handleWindowLeave);
-      
-      // Clear any pending throttle timeout
-      if (throttleTimeout) {
-        clearTimeout(throttleTimeout);
-      }
-    };
-  }, [dragStart, draggedItem]); // Add dependencies for drag state
 
   // Toggle epic expansion in unassigned section
   const toggleEpicExpansionUnassigned = (epicId: string) => {
@@ -280,7 +260,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.log(`🔼 EXPANDING UNASSIGNED EPIC: ${epicId}`);
     }
     setExpandedEpicsUnassigned(newExpanded);
-    console.log(`📋 EXPANDED UNASSIGNED EPICS:`, Array.from(newExpanded));
   };
 
   // Toggle epic expansion in sprint section
@@ -294,7 +273,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       console.log(`🔼 EXPANDING SPRINT EPIC: ${epicId}`);
     }
     setExpandedEpicsSprint(newExpanded);
-    console.log(`📋 EXPANDED SPRINT EPICS:`, Array.from(newExpanded));
   };
 
   // Toggle sprint expansion
@@ -353,15 +331,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     !item.epicId   // Not an epic child (they'll be grouped under parent epics)
   );
 
-  // TEMP DEBUG: Check what's in unassigned items
-  console.log('📋 Sample unassigned items:', unassignedItems.slice(0, 5).map(item => ({
-    id: item.id,
-    title: item.title.substring(0, 40),
-    isEpic: item.isEpic,
-    epicId: item.epicId,
-    jiraId: item.jiraId,
-    isChild: item.jiraId?.includes('-') && item.title.includes('Child')
-  })));
+
 
   // Get blocked work items (have unfinished dependencies)
   const blockedItems = getBlockedWorkItems(unassignedItems, currentWorkItems);
@@ -489,6 +459,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       const assignedItems = currentWorkItems.filter(item =>
         item.assignedSprints.includes(sprint.id)
       );
+      
 
 
 
@@ -1338,6 +1309,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (!workItem) {
         console.error(`Work item ${itemId} not found`);
         alert(`Work item not found. Please refresh the page and try again.`);
+        
+        // Clean up drag state on error
+        setDraggedItem(null);
+        setDragStart(null);
+        setHideDropZones(false);
+        dropHandledRef.current = false;
+        
         return;
       }
 
@@ -1345,6 +1323,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (workItem.assignedSprints.includes(sprintId)) {
         console.log(`Item ${itemId} already assigned to sprint ${sprintId}`);
         alert(`"${workItem.title}" is already assigned to this sprint.`);
+        
+        // Clean up drag state on error
+        setDraggedItem(null);
+        setDragStart(null);
+        setHideDropZones(false);
+        dropHandledRef.current = false;
+        
         return;
       }
 
@@ -1353,11 +1338,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       // Use enhanced skill detection
       const detectedSkills = detectSkillsFromContent(workItem);
-      console.log(`🔍 DEBUG: Work item "${workItem.title}" skill detection result:`, {
-        currentSkills: workItem.requiredSkills,
-        detectedSkills: detectedSkills,
-        detectedLength: detectedSkills.length
-      });
 
       // If we get a single skill back, apply it (regardless of current skills)
       if (detectedSkills.length === 1) {
@@ -1445,12 +1425,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             console.log('✅ Work item skills updated in database');
           }
 
-          // Check if already assigned to this sprint
-          if (workItem.sprintId === sprintId) {
-            console.log(`ℹ️ Work item "${workItem.title}" is already assigned to sprint ${targetSprint.name}`);
-            alert(`ℹ️ "${workItem.title}" is already assigned to sprint "${targetSprint.name}"`);
-            return;
-          }
+          // Note: Already checked assignedSprints earlier, no need for additional check here
 
           console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
           await workItemsApi.assignToSprint(itemId, sprintId);
@@ -1467,6 +1442,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           }
 
           alert(`❌ ${errorMessage}`);
+          
+          // Clean up drag state on error
+          setDraggedItem(null);
+          setDragStart(null);
+          setHideDropZones(false);
+          dropHandledRef.current = false;
+          
           return;
         }
       } else {
@@ -1474,6 +1456,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         const message = `Cannot assign "${workItem.title}" to sprint. This item needs to be converted to a work item first.`;
         console.log(`❌ ${message}`);
         alert(`❌ ${message}\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
+        
+        // Clean up drag state on error
+        setDraggedItem(null);
+        setDragStart(null);
+        setHideDropZones(false);
+        dropHandledRef.current = false;
+        
         return;
       }
 
@@ -1753,6 +1742,14 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             Sprint Planning
           </h2>
           <div className="flex gap-2">
+            {draggedItem && (
+              <button
+                onClick={clearDragState}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+              >
+                🚫 Exit Drag Mode
+              </button>
+            )}
             {(() => {
               console.log('🎨 UI RENDER CHECK:', {
                 autoAssignPreview: autoAssignPreview,
@@ -1889,7 +1886,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Velocity Trend:</span>
                     <span className={`font-bold ${velocityAnalysis.velocityTrend === 'improving' ? 'text-green-600' :
-                        velocityAnalysis.velocityTrend === 'declining' ? 'text-red-600' : 'text-gray-600'
+                      velocityAnalysis.velocityTrend === 'declining' ? 'text-red-600' : 'text-gray-600'
                       }`}>
                       {velocityAnalysis.velocityTrend === 'improving' ? '📈 Improving' :
                         velocityAnalysis.velocityTrend === 'declining' ? '📉 Declining' : '📊 Stable'}
@@ -1898,7 +1895,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Confidence Level:</span>
                     <span className={`font-bold ${velocityAnalysis.confidenceLevel === 'high' ? 'text-green-600' :
-                        velocityAnalysis.confidenceLevel === 'medium' ? 'text-yellow-600' : 'text-red-600'
+                      velocityAnalysis.confidenceLevel === 'medium' ? 'text-yellow-600' : 'text-red-600'
                       }`}>
                       {velocityAnalysis.confidenceLevel.toUpperCase()}
                     </span>
@@ -2159,16 +2156,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         key={item.id}
                         data-item-id={item.id}
                         onPointerDown={(e) => {
-                          // Only start potential drag on left mouse button
+                          // Only start drag on left mouse button
                           if (e.button !== 0) return;
 
-                          console.log(`🔽 POINTER DOWN: Starting potential drag for "${item.title}"`);
+                          console.log(`🔽 POINTER DOWN: Starting immediate drag for "${item.title}"`);
+                          // Start drag immediately - simple and clean
+                          setDraggedItem(item.id);
                           setDragStart({
                             x: e.clientX,
                             y: e.clientY,
                             itemId: item.id
                           });
-                          // Don't prevent default to allow scrolling
+                          setHideDropZones(false);
                         }}
                         onClick={(e) => {
                           console.log(`🖱️ CLICKED on item: "${item.title}"`);
@@ -2214,15 +2213,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               if (sprintId) {
                                 addDebugEvent(`🎯 SUCCESS! Assigned "${item.title}" to sprint`);
 
-                                // Stop event propagation to prevent sprint handler from also firing
-                                e.stopPropagation();
-                                e.preventDefault();
-
                                 // Mark drop as handled
                                 dropHandledRef.current = true;
+                                
+                                const itemToAssign = draggedItem;
+                                
+                                // Clear drag state immediately
+                                setDraggedItem(null);
+                                setDragStart(null);
+                                setHideDropZones(false);
 
-                                // Assign to sprint (global handler will clean up drag state)
-                                assignItemToSprint(draggedItem, sprintId);
+                                // Assign to sprint
+                                assignItemToSprint(itemToAssign, sprintId);
                                 return; // Successfully handled
                               }
                             }
@@ -2260,8 +2262,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                 <span
                                   key={skill}
                                   className={`px-1 py-0.5 rounded text-xs font-medium ${skill === 'frontend'
-                                      ? 'bg-purple-100 text-purple-800'
-                                      : 'bg-orange-100 text-orange-800'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : 'bg-orange-100 text-orange-800'
                                     }`}
                                 >
                                   {skill === 'frontend' ? 'FE' : 'BE'}
@@ -2313,8 +2315,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   <span
                                     key={skill}
                                     className={`px-1 py-0.5 rounded text-xs font-medium ${skill === 'frontend'
-                                        ? 'bg-purple-100 text-purple-800'
-                                        : 'bg-orange-100 text-orange-800'
+                                      ? 'bg-purple-100 text-purple-800'
+                                      : 'bg-orange-100 text-orange-800'
                                       }`}
                                   >
                                     {skill === 'frontend' ? 'FE' : 'BE'}
@@ -2433,15 +2435,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             key={child.id}
                             data-item-id={child.id}
                             onPointerDown={isDraggable ? (e) => {
-                              // Only start potential drag on left mouse button
+                              // Only start drag on left mouse button
                               if (e.button !== 0) return;
 
+                              console.log(`🔽 POINTER DOWN: Starting immediate drag for epic child "${child.title}"`);
+                              // Start drag immediately - simple and clean
+                              setDraggedItem(child.id);
                               setDragStart({
                                 x: e.clientX,
                                 y: e.clientY,
                                 itemId: child.id
                               });
-                              // Don't prevent default to allow scrolling
+                              setHideDropZones(false);
                             } : undefined}
                             onPointerUp={isDraggable ? (e) => {
                               // Always clear drag start on pointer up
@@ -2463,12 +2468,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
                                 if (sprintId) {
                                   console.log(`🎯 SUCCESS! Epic child "${child.title}" assigned to sprint`);
-                                  e.stopPropagation();
-                                  e.preventDefault();
 
                                   // Mark that this drop was handled by a specific handler
                                   dropHandledRef.current = true;
+                                  
+                                  // Clear drag state immediately
+                                  setDraggedItem(null);
+                                  setDragStart(null);
+                                  setHideDropZones(false);
 
+                                  // Assign to sprint
                                   assignItemToSprint(child.id, sprintId);
                                   return;
                                 }
@@ -2652,21 +2661,27 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           setDragStart(null);
 
                           if (draggedItem) {
+                            console.log(`🎯 SPRINT CONTAINER POINTER UP: Dropped "${draggedItem}" in "${sprint.name}"`);
                             addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
-                            e.stopPropagation(); // Prevent global pointerup from running too early
 
                             // Mark that this drop was handled by a specific handler
                             dropHandledRef.current = true;
+                            console.log(`🏁 Set dropHandledRef to true for sprint container drop`);
 
                             const itemToAssign = draggedItem;
+                            
+                            // Clear drag state immediately after capturing draggedItem
+                            setDraggedItem(null);
+                            setDragStart(null);
+                            setHideDropZones(false);
 
-                            // Assign to sprint (global handler will clean up visual state)
+                            // Assign to sprint
                             assignItemToSprint(itemToAssign, sprint.id);
                           }
                         }}
                         className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${(draggedItem && !hideDropZones)
-                            ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200'
-                            : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
+                          ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200'
+                          : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
                           }`}
                         style={{
                           minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
@@ -2918,47 +2933,47 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         
                                         {/* Standalone items */}
                                         {standalone.map(item => (
-                                          <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
-                                            <div className="flex items-center gap-2">
-                                              <div>
-                                                {item.jiraId ? (
-                                                  <span className="font-medium">
-                                                    <a
-                                                      href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                                      onClick={(e) => e.stopPropagation()}
-                                                    >
-                                                      {item.jiraId}
-                                                      <ExternalLink className="h-3 w-3" />
-                                                    </a>
-                                                    <span className="ml-1">- {item.title}</span>
-                                                  </span>
-                                                ) : (
-                                                  <span className="font-medium">{item.title}</span>
-                                                )}
-                                                <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                                                <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                                                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                                      'bg-gray-100 text-gray-800'
-                                                  }`}>
-                                                  {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <button
-                                              onClick={(e) => {
-                                                console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                removeItemFromSprint(item.id, sprint.id);
-                                              }}
-                                              className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                  <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div>
+                                        {item.jiraId ? (
+                                          <span className="font-medium">
+                                            <a
+                                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                              onClick={(e) => e.stopPropagation()}
                                             >
-                                              Remove
-                                            </button>
-                                          </div>
+                                              {item.jiraId}
+                                              <ExternalLink className="h-3 w-3" />
+                                            </a>
+                                            <span className="ml-1">- {item.title}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="font-medium">{item.title}</span>
+                                        )}
+                                        <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                          item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                            'bg-gray-100 text-gray-800'
+                                          }`}>
+                                          {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        removeItemFromSprint(item.id, sprint.id);
+                                      }}
+                                      className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
                                         ))}
                                       </div>
                                     );
