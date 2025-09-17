@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
 import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
+import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter, calculateAvailableDevelopmentDays } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
@@ -2731,6 +2731,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               </div>
                               <p className="text-sm text-gray-600">
                                 {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {(() => {
+                                  const developmentDays = calculateAvailableDevelopmentDays(sprint, data.teamMembers, data.publicHolidays);
+                                  return `${developmentDays.toFixed(1)} development days`;
+                                })()}
                               </p>
                             </div>
                           </div>
