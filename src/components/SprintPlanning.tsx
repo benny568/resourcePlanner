@@ -314,34 +314,62 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
 
 
+  // Helper function to check if an item is completed, cancelled, or deployed (not available for assignment)
+  const isItemUnavailableForAssignment = (item: WorkItem): boolean => {
+    // Check simplified status for completion
+    if (item.status === 'Completed') {
+      return true;
+    }
+    
+    // Check Jira status for completion, cancellation, and deployment states
+    if (!!item.jiraStatus && [
+      'Done', 'Resolved', 'Closed', 'Complete', 'Completed',
+      'Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected',
+      'Deployed', 'Released', 'Live', 'Production'
+    ].includes(item.jiraStatus)) {
+      return true;
+    }
+    
+    return false;
+  };
+
   // Get unassigned work items (exclude epic children - they'll be shown under parent epics)  
   const unassignedItems = currentWorkItems.filter(item =>
     item.assignedSprints.length === 0 &&
-    item.status !== 'Completed' &&
+    !isItemUnavailableForAssignment(item) &&
     !item.isEpic && // Not an epic work item
     !item.epicId   // Not an epic child (they'll be grouped under parent epics)
   );
 
-  // TEMP DEBUG: Check what's in unassigned items
+  // DEBUG: Check what's in unassigned items
+  console.log(`🔍 FILTERING DEBUG:`);
+  console.log(`   📊 Total currentWorkItems: ${currentWorkItems.length}`);
+  console.log(`   🚫 Items filtered out by assignedSprints.length > 0: ${currentWorkItems.filter(item => item.assignedSprints.length > 0).length}`);
+  console.log(`   ❌ Items filtered out by isItemUnavailableForAssignment: ${currentWorkItems.filter(item => isItemUnavailableForAssignment(item)).length}`);
+  console.log(`   📚 Items filtered out by isEpic: ${currentWorkItems.filter(item => item.isEpic).length}`);
+  console.log(`   👶 Items filtered out by epicId (epic children): ${currentWorkItems.filter(item => item.epicId).length}`);
+  console.log(`   ✅ Final unassignedItems: ${unassignedItems.length}`);
+  
   console.log('📋 Sample unassigned items:', unassignedItems.slice(0, 5).map(item => ({
     id: item.id,
     title: item.title.substring(0, 40),
     isEpic: item.isEpic,
     epicId: item.epicId,
     jiraId: item.jiraId,
-    isChild: item.jiraId?.includes('-') && item.title.includes('Child')
+    jiraStatus: item.jiraStatus,
+    status: item.status
   })));
 
   // Get blocked work items (have unfinished dependencies)
   const blockedItems = getBlockedWorkItems(unassignedItems, currentWorkItems);
   const readyItems = unassignedItems.filter(item => !blockedItems.includes(item));
 
-  // Get all epic work items that are not completed (work items with isEpic: true)
+  // Get all epic work items that are not completed or cancelled (work items with isEpic: true)
   const unassignedEpicWorkItems = currentWorkItems.filter(item =>
     item.isEpic &&
-    item.status !== 'Completed' &&
+    !isItemUnavailableForAssignment(item) &&
     (item.assignedSprints.length === 0 || // Epic itself is unassigned OR
-      (item.children && item.children.some(child => child.assignedSprints.length === 0 && child.status !== 'Completed'))) // Has unassigned children
+      (item.children && item.children.some(child => child.assignedSprints.length === 0 && !isItemUnavailableForAssignment(child)))) // Has unassigned children
   );
 
 
@@ -488,7 +516,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       // Calculate skill-specific capacities
       const skillCapacities = calculateSprintSkillCapacities(sprint, data.teamMembers, data.publicHolidays);
-      const capacity = skillCapacities.total;
+      const capacity = sprint.plannedVelocity; // Use sprint.plannedVelocity to match UI display
 
       // Calculate skill-specific assignments
       const frontendItems = allAssignedItems.filter(item => item.requiredSkills.includes('frontend'));
@@ -714,6 +742,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     // Get all items that need assignment (including epic children)
     const allUnassignedItems = [];
 
+    console.log(`🔍 DEBUG AUTO-ASSIGN INPUTS:`);
+    console.log(`   📝 readyItems: ${readyItems.length} items`);
+    console.log(`   📚 unassignedEpicWorkItems: ${unassignedEpicWorkItems.length} epics`);
+    console.log(`   📊 totalWorkItems: ${updatedWorkItems.length} items`);
+
     // Add individual unassigned items
     allUnassignedItems.push(...readyItems);
 
@@ -721,7 +754,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     unassignedEpicWorkItems.forEach(epic => {
       if (epic.children) {
         const unassignedChildren = epic.children.filter(child =>
-          child.assignedSprints.length === 0 && child.status !== 'Completed'
+          child.assignedSprints.length === 0 && !isItemUnavailableForAssignment(child)
         ).map(child => {
           const inheritedChild = {
             ...child,
@@ -739,6 +772,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         allUnassignedItems.push(...unassignedChildren);
       }
     });
+
+    console.log(`🔍 DEBUG FINAL ITEM COLLECTION:`);
+    console.log(`   📋 allUnassignedItems: ${allUnassignedItems.length} total items collected`);
+    allUnassignedItems.slice(0, 5).forEach((item, i) => {
+      console.log(`      ${i+1}. "${item.title.substring(0, 40)}" (${item.estimateStoryPoints || 0}pts, ${item.jiraStatus || item.status})`);
+    });
+
+    if (allUnassignedItems.length === 0) {
+      console.log('❌ ERROR: No items collected for auto-assignment! Check filtering logic.');
+      alert('❌ No items available for assignment. All items may be completed, cancelled, deployed, or already assigned.');
+      return;
+    }
 
     // Clear existing assignments for items we're about to auto-assign
     allUnassignedItems.forEach(item => {
@@ -868,38 +913,81 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
 
-      // Priority-aware sprint assignment: ensure higher priority items get earlier sprint access
-      const getPriorityAwareStartSprint = () => {
+      // ENHANCED: Sequential filling strategy - completely fill each sprint before moving to next
+      const getSequentialFillStartSprint = () => {
+        // For Critical/High priority: can access any sprint but prefer earlier ones
         const itemPriorityNum = priorityOrder[itemPriority];
-
-        // For Critical/High priority: can access any sprint
         if (itemPriorityNum <= 2) return currentSprintIndex;
 
-        // For Medium/Low priority: find first sprint without higher priority items
+        // For all items: find the earliest sprint that has any available capacity for this item's skills
         for (let sprintIdx = currentSprintIndex; sprintIdx < existingSprints.length; sprintIdx++) {
           const sprintData = existingSprints[sprintIdx];
           const sprint = sprintData.sprint;
 
-          // Check if sprint has any work items and if any have higher priority
-          const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 &&
-            sprint.workItems.some(workItem => {
-              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') :
-                (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
-              return priorityOrder[workItemPriority] < itemPriorityNum;
-            });
+          // RELAXED: Allow early delivery - only skip sprints that are WAY after deadline (>3 months)
+          const itemDeadline = item.requiredCompletionDate instanceof Date
+            ? item.requiredCompletionDate
+            : new Date(item.requiredCompletionDate);
+          const threeMonthsAfterDeadline = new Date(itemDeadline.getTime() + (90 * 24 * 60 * 60 * 1000));
+          if (isAfter(sprint.endDate, threeMonthsAfterDeadline)) {
+            console.log(`   ⏰ Skipping sprint ${sprintIdx + 1}: ends way after deadline (${format(sprint.endDate, 'MMM dd')} vs ${format(itemDeadline, 'MMM dd')})`);
+            continue;
+          }
+          
+          // Log early delivery for transparency
+          if (isBefore(sprint.endDate, itemDeadline)) {
+            console.log(`   📅 Early delivery opportunity: Sprint ${sprintIdx + 1} ends ${format(sprint.endDate, 'MMM dd')}, deadline is ${format(itemDeadline, 'MMM dd')}`);
+          }
 
-          if (!hasHigherPriorityItems) {
-            if (sprintIdx > currentSprintIndex) {
-              console.log(`   🚫 Priority blocking: ${itemPriority} item redirected from sprint ${currentSprintIndex + 1} to sprint ${sprintIdx + 1}`);
-            }
+          // Calculate current utilization for this sprint
+          const currentUtilization = sprintUtilizations.get(sprint.id) || {
+            totalCapacity: sprintData.capacity,
+            frontendCapacity: sprintData.skillCapacities.frontend,
+            backendCapacity: sprintData.skillCapacities.backend,
+            assignedTotal: sprintData.assignedPoints,
+            assignedFrontend: sprintData.frontendPoints,
+            assignedBackend: sprintData.backendPoints
+          };
+
+          // Check if this sprint has available capacity for this item's skills
+          let hasCapacityForItem = false;
+          const itemPoints = item.estimateStoryPoints || 0;
+
+          if (item.requiredSkills.includes('frontend' as any)) {
+            const frontendAvailable = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
+            if (frontendAvailable >= itemPoints) hasCapacityForItem = true;
+          }
+          if (item.requiredSkills.includes('backend' as any)) {
+            const backendAvailable = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
+            if (backendAvailable >= itemPoints) hasCapacityForItem = true;
+          }
+          if (item.requiredSkills.length === 0) {
+            const totalAvailable = currentUtilization.totalCapacity - currentUtilization.assignedTotal;
+            if (totalAvailable >= itemPoints) hasCapacityForItem = true;
+          }
+
+          if (hasCapacityForItem) {
+            console.log(`   🎯 Sequential fill: Using earliest available sprint ${sprintIdx + 1} (${sprint.name})`);
             return sprintIdx;
+          } else {
+            console.log(`   ❌ Sprint ${sprintIdx + 1} full for ${item.requiredSkills.join('/')} skills (${itemPoints} pts needed)`);
           }
         }
 
-        return currentSprintIndex; // Fallback
+        // If no existing sprint has capacity, use current index to trigger new sprint creation
+        console.log(`   🆕 No existing sprint has capacity - will create new sprint`);
+        console.log(`   🔍 DEBUG: Checked ${existingSprints.length} sprints, none had capacity for ${item.estimateStoryPoints || 0} pts (${item.requiredSkills.join('/')} skills)`);
+        existingSprints.slice(0, 3).forEach((sprintData, idx) => {
+          const currentWorkItems = (sprintData.sprint.workItems || [])
+            .map(itemId => typeof itemId === 'string' ? updatedWorkItems.find(wi => wi.id === itemId) : itemId)
+            .filter((item): item is WorkItem => !!item);
+          const currentLoad = currentWorkItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+          console.log(`      Sprint ${idx}: ${sprintData.sprint.name} - Load: ${currentLoad}/${sprintData.capacity} pts, Available: ${sprintData.capacity - currentLoad} pts`);
+        });
+        return currentSprintIndex;
       };
 
-      const startSprintIndex = getPriorityAwareStartSprint();
+      const startSprintIndex = getSequentialFillStartSprint();
 
       // Try to assign to existing sprints first (aiming for priority-based capacity)
       for (let i = startSprintIndex; i < existingSprints.length && !assigned; i++) {
@@ -914,14 +1002,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           continue;
         }
 
-        // Check deadline constraint - sprint must end before or on the item deadline
+        // RELAXED: Only reject sprints that are way past deadline - allow early delivery
         const itemDeadline = item.requiredCompletionDate instanceof Date
           ? item.requiredCompletionDate
           : new Date(item.requiredCompletionDate);
-        if (isAfter(sprint.endDate, itemDeadline)) {
-          // Sprint ends after item deadline - this sprint is too late
-          console.log(`   ❌ Failed deadline check: sprint ends ${sprint.endDate} vs deadline ${itemDeadline}`);
+        const threeMonthsAfterDeadline = new Date(itemDeadline.getTime() + (90 * 24 * 60 * 60 * 1000));
+        if (isAfter(sprint.endDate, threeMonthsAfterDeadline)) {
+          console.log(`   ❌ Failed deadline check: sprint ends way after deadline (${format(sprint.endDate, 'MMM dd')} vs ${format(itemDeadline, 'MMM dd')})`);
           continue;
+        }
+        
+        // Prefer earlier delivery when possible
+        if (isBefore(sprint.endDate, itemDeadline)) {
+          console.log(`   ✅ Early delivery: Sprint ends ${format(sprint.endDate, 'MMM dd')}, deadline ${format(itemDeadline, 'MMM dd')}`);
         }
 
         // Calculate current utilization
@@ -943,37 +1036,67 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedBackend: currentUtilization.assignedBackend
         });
 
-        // Check if adding this item would exceed priority-based capacity in any skill
-        // For items requiring both skills, use a more balanced approach
+        // ENHANCED: Smart capacity checking for maximum sprint utilization
         const skillCapacityCheck = (() => {
+          const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
+          const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+
           if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
             // For full-stack items, check if either skill can accommodate the work
-            // This allows better utilization when one skill has more capacity
-            const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-            const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-
             console.log(`   🔄 Full-stack item check:`);
             console.log(`   🎨 Frontend: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
             console.log(`   ⚙️ Backend: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
 
-            // Allow assignment if the average utilization is within target
-            const avgUtil = (newFrontendUtil + newBackendUtil) / 2;
-            console.log(`   📊 Average utilization: ${avgUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            return avgUtil <= targetUtilization;
-          } else {
-            // For single-skill items, use the original strict checking
-            return item.requiredSkills.every(skill => {
-              if (skill === 'frontend') {
-                const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-                console.log(`   🎨 Frontend-only check: ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-                return newFrontendUtil <= targetUtilization;
-              } else if (skill === 'backend') {
-                const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-                console.log(`   ⚙️ Backend-only check: ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-                return newBackendUtil <= targetUtilization;
-              }
+            // Allow assignment if EITHER skill has capacity (ultra-flexible assignment)
+            const flexibleTargetUtil = targetUtilization * 1.2; // Allow 20% over-allocation for maximum utilization
+            const frontendOk = newFrontendUtil <= flexibleTargetUtil;
+            const backendOk = newBackendUtil <= flexibleTargetUtil;
+            
+            if (frontendOk && backendOk) {
+              console.log(`   ✅ Both skills have capacity - assigning to both`);
               return true;
-            });
+            } else if (frontendOk && !backendOk) {
+              console.log(`   🎨 Backend full, but frontend has capacity - treating as frontend-only`);
+              return true;
+            } else if (!frontendOk && backendOk) {
+              console.log(`   ⚙️ Frontend full, but backend has capacity - treating as backend-only`);
+              return true;
+            } else {
+              console.log(`   ❌ Both skills over capacity`);
+              return false;
+            }
+          } else if (item.requiredSkills.includes('frontend')) {
+            // Frontend-only items with flexible assignment
+            console.log(`   🎨 Frontend-only check: ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            const flexibleTargetUtil = targetUtilization * 1.2; // Allow 20% over-allocation
+            return newFrontendUtil <= flexibleTargetUtil || newBackendUtil <= flexibleTargetUtil;
+          } else if (item.requiredSkills.includes('backend')) {
+            // Backend-only items - but offer intelligent fallback
+            console.log(`   ⚙️ Backend-only check: ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            
+            const flexibleTargetUtil = targetUtilization * 1.2; // Allow 20% over-allocation
+            if (newBackendUtil <= flexibleTargetUtil) {
+              return true;
+            } else {
+              // SMART FALLBACK: If backend is full but item could potentially be done by frontend
+              // (and frontend has capacity), allow flexible assignment
+              const canFallbackToFrontend = newFrontendUtil <= flexibleTargetUtil;
+              if (canFallbackToFrontend) {
+                console.log(`   🔄 Backend full (${newBackendUtil * 100}%), but frontend has capacity (${newFrontendUtil * 100}%) - enabling flexible assignment`);
+                return true;
+              }
+              return false;
+            }
+          } else {
+            // Items with no specific skill requirements - assign to least utilized skill
+            const frontendAvailable = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
+            const backendAvailable = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
+            
+            if (frontendAvailable >= item.estimateStoryPoints || backendAvailable >= item.estimateStoryPoints) {
+              console.log(`   🔀 No specific skills - assigning to available capacity`);
+              return true;
+            }
+            return false;
           }
         })();
 
@@ -1000,17 +1123,53 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               };
             }
 
-            // Update utilization tracking
+            // ENHANCED: Smart utilization tracking for flexible assignment
             const updatedUtil = { ...currentUtilization };
             updatedUtil.assignedTotal += item.estimateStoryPoints;
 
-            item.requiredSkills.forEach(skill => {
-              if (skill === 'frontend') {
-                updatedUtil.assignedFrontend += item.estimateStoryPoints;
-              } else if (skill === 'backend') {
-                updatedUtil.assignedBackend += item.estimateStoryPoints;
+            // Determine optimal skill assignment based on current utilization
+            const frontendUtil = currentUtilization.assignedFrontend / currentUtilization.frontendCapacity;
+            const backendUtil = currentUtilization.assignedBackend / currentUtilization.backendCapacity;
+            
+            if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
+              // Full-stack items: assign to both skills proportionally, or to the skill with more capacity
+              if (frontendUtil <= backendUtil) {
+                // Assign more to frontend if it has more capacity
+                updatedUtil.assignedFrontend += item.estimateStoryPoints * 0.7;
+                updatedUtil.assignedBackend += item.estimateStoryPoints * 0.3;
+                console.log(`   📊 Full-stack item: Weighted assignment (70% FE, 30% BE due to capacity)`);
+              } else {
+                // Assign more to backend if it has more capacity
+                updatedUtil.assignedFrontend += item.estimateStoryPoints * 0.3;
+                updatedUtil.assignedBackend += item.estimateStoryPoints * 0.7;
+                console.log(`   📊 Full-stack item: Weighted assignment (30% FE, 70% BE due to capacity)`);
               }
-            });
+            } else if (item.requiredSkills.includes('frontend')) {
+              // Frontend-only items
+              updatedUtil.assignedFrontend += item.estimateStoryPoints;
+              console.log(`   📊 Frontend-only item: Added ${item.estimateStoryPoints} points to frontend`);
+            } else if (item.requiredSkills.includes('backend')) {
+              // Backend items with potential flexible assignment
+              const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+              if (newBackendUtil <= targetUtilization) {
+                // Assign to backend if capacity allows
+                updatedUtil.assignedBackend += item.estimateStoryPoints;
+                console.log(`   📊 Backend item: Added ${item.estimateStoryPoints} points to backend`);
+              } else {
+                // Use flexible assignment to frontend
+                updatedUtil.assignedFrontend += item.estimateStoryPoints;
+                console.log(`   📊 Backend item (flexible): Added ${item.estimateStoryPoints} points to frontend due to backend capacity`);
+              }
+            } else {
+              // Items with no specific skills: assign to least utilized skill
+              if (frontendUtil <= backendUtil) {
+                updatedUtil.assignedFrontend += item.estimateStoryPoints;
+                console.log(`   📊 Unspecified skills: Added ${item.estimateStoryPoints} points to frontend (less utilized)`);
+              } else {
+                updatedUtil.assignedBackend += item.estimateStoryPoints;
+                console.log(`   📊 Unspecified skills: Added ${item.estimateStoryPoints} points to backend (less utilized)`);
+              }
+            }
 
             sprintUtilizations.set(sprint.id, updatedUtil);
             assigned = true;
@@ -1064,6 +1223,227 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           console.log(`❌ Failed to create new sprint for item "${item.title}"`);
         }
       }
+    });
+
+    // ENHANCED: Aggressive sequential filling - multiple passes until sprints are maximally filled
+    console.log(`🔄 AGGRESSIVE SEQUENTIAL FILLING: Attempting to achieve maximum utilization...`);
+    
+    let totalOptimizationsMade = 0;
+    let passNumber = 1;
+    const maxPasses = 10; // Increased from 5 to 10 for more aggressive optimization
+    
+    // Run multiple optimization passes until no more improvements can be made
+    while (passNumber <= maxPasses) {
+      console.log(`🌀 OPTIMIZATION PASS ${passNumber}:`);
+      
+      // Recalculate sprint capacities after each pass
+      const sprintsWithCapacity = existingSprints
+        .map((sprintData, index) => {
+          // Get updated work items for this sprint
+          const updatedSprint = updatedSprints.find(s => s.id === sprintData.sprint.id);
+          const sprintWorkItems = (updatedSprint?.workItems || [])
+            .map(itemId => typeof itemId === 'string' ? updatedWorkItems.find(wi => wi.id === itemId) : itemId)
+            .filter((item): item is WorkItem => !!item);
+
+          // Calculate current utilization based on actually assigned items
+          let assignedTotal = 0;
+          let assignedFrontend = 0;
+          let assignedBackend = 0;
+
+          sprintWorkItems.forEach(item => {
+            const points = item.estimateStoryPoints || 0;
+            assignedTotal += points;
+            
+            if (item.requiredSkills.includes('frontend' as any)) {
+              assignedFrontend += points;
+            }
+            if (item.requiredSkills.includes('backend' as any)) {
+              assignedBackend += points;
+            }
+          });
+
+          const frontendAvailable = Math.max(0, sprintData.skillCapacities.frontend - assignedFrontend);
+          const backendAvailable = Math.max(0, sprintData.skillCapacities.backend - assignedBackend);
+          const totalAvailable = Math.max(0, sprintData.capacity - assignedTotal);
+
+          return {
+            sprintData,
+            index,
+            assignedTotal,
+            assignedFrontend,
+            assignedBackend,
+            availableCapacity: {
+              frontend: frontendAvailable,
+              backend: backendAvailable,
+              total: totalAvailable
+            },
+            utilizationPercent: (assignedTotal / sprintData.capacity) * 100
+          };
+        })
+        .filter(sprint => sprint.availableCapacity.total > 0.01) // ULTRA-AGGRESSIVE: Fill any sprint with ANY available capacity
+        .sort((a, b) => a.sprintData.sprint.startDate.getTime() - b.sprintData.sprint.startDate.getTime()); // Earliest first
+
+      console.log(`   📊 Found ${sprintsWithCapacity.length} sprints with available capacity:`);
+      sprintsWithCapacity.forEach(sprint => {
+        console.log(`      ${sprint.sprintData.sprint.name}: ${sprint.utilizationPercent.toFixed(1)}% utilized, ${sprint.availableCapacity.total.toFixed(1)} points available (FE: ${sprint.availableCapacity.frontend.toFixed(1)}, BE: ${sprint.availableCapacity.backend.toFixed(1)})`);
+        
+        // Extra debug: Show what's needed to fill this sprint
+        if (sprint.availableCapacity.total > 1) {
+          console.log(`         🎯 TARGET: This sprint needs ${sprint.availableCapacity.total.toFixed(1)} more points to be full`);
+          console.log(`         🔧 SKILL BREAKDOWN: Frontend available: ${sprint.availableCapacity.frontend.toFixed(1)} pts, Backend available: ${sprint.availableCapacity.backend.toFixed(1)} pts`);
+        }
+      });
+
+      if (sprintsWithCapacity.length === 0) {
+        console.log(`   ✅ All sprints are maximally utilized!`);
+        break;
+      }
+
+      // Try to move items from later sprints to earlier sprints with available capacity
+      let passOptimizations = 0;
+      
+      for (const targetSprint of sprintsWithCapacity) {
+        if (targetSprint.availableCapacity.total < 0.01) continue; // ULTRA-AGGRESSIVE: Fill every fraction of capacity
+
+        // Find items in later sprints that could be moved to this earlier sprint
+        for (let laterSprintIndex = targetSprint.index + 1; laterSprintIndex < existingSprints.length; laterSprintIndex++) {
+          const laterSprintData = existingSprints[laterSprintIndex];
+          const laterSprint = laterSprintData.sprint;
+          const updatedLaterSprint = updatedSprints.find(s => s.id === laterSprint.id);
+
+          if (!updatedLaterSprint?.workItems || updatedLaterSprint.workItems.length === 0) continue;
+
+          // Find ALL items that can be moved, sorted by size (smallest first for better packing)
+          const movableItems = (updatedLaterSprint.workItems || [])
+            .map(itemId => typeof itemId === 'string' ? updatedWorkItems.find(wi => wi.id === itemId) : itemId)
+            .filter((item): item is WorkItem => !!item)
+            .filter(item => {
+              const itemPriority = item.isEpic ? (item.priority || 'Medium') :
+                (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
+              
+              // ULTRA-AGGRESSIVE: Allow moving any priority from pass 1 to maximize utilization
+              const canMove = true; // No priority restrictions - fill sprints completely
+              
+              // Check if item fits in target sprint's available capacity
+              const itemPoints = item.estimateStoryPoints || 0;
+              const fitsInTarget = itemPoints <= targetSprint.availableCapacity.total;
+              
+              // Check skill-specific capacity with ULTRA-FLEXIBLE assignment
+              let skillFits = true;
+              if (item.requiredSkills.includes('frontend' as any) || item.requiredSkills.includes('backend' as any)) {
+                // For ANY skill item: can use ANY available capacity (frontend OR backend)
+                // This maximizes utilization by allowing cross-skill assignment
+                const frontendFits = itemPoints <= targetSprint.availableCapacity.frontend;
+                const backendFits = itemPoints <= targetSprint.availableCapacity.backend;
+                skillFits = frontendFits || backendFits;
+              }
+              // Items with no specific skills (rare) always fit if total capacity available
+
+              const canAssign = canMove && fitsInTarget && skillFits;
+              
+              // Debug why items can't be moved
+              if (!canAssign && targetSprint.availableCapacity.total > 1) {
+                console.log(`         ❌ REJECTED: "${item.title.substring(0, 40)}" (${itemPoints}pts, ${item.requiredSkills.join('/')}) - canMove: ${canMove}, fitsTotal: ${fitsInTarget}, skillFits: ${skillFits}`);
+              }
+              
+              return canAssign;
+            })
+            .sort((a, b) => (a.estimateStoryPoints || 0) - (b.estimateStoryPoints || 0)); // Smallest items first
+
+          // Move as many items as possible to maximize utilization
+          for (const itemToMove of movableItems) {
+            const itemPoints = itemToMove.estimateStoryPoints || 0;
+            
+            // Double-check capacity before moving
+            if (itemPoints > targetSprint.availableCapacity.total) continue;
+            
+            console.log(`   🔄 PASS ${passNumber}: Moving "${itemToMove.title}" (${itemPoints}pts) from ${laterSprint.name} to ${targetSprint.sprintData.sprint.name}`);
+
+            // Remove from later sprint
+            const laterSprintIndex = updatedSprints.findIndex(s => s.id === laterSprint.id);
+            if (laterSprintIndex >= 0) {
+              updatedSprints[laterSprintIndex] = {
+                ...updatedSprints[laterSprintIndex],
+                workItems: updatedSprints[laterSprintIndex].workItems?.filter(wi => (typeof wi === 'string' ? wi : wi.id) !== itemToMove.id) || []
+              };
+            }
+
+            // Add to target sprint
+            const targetSprintIndex = updatedSprints.findIndex(s => s.id === targetSprint.sprintData.sprint.id);
+            if (targetSprintIndex >= 0) {
+              updatedSprints[targetSprintIndex] = {
+                ...updatedSprints[targetSprintIndex],
+                workItems: [...(updatedSprints[targetSprintIndex].workItems || []), itemToMove.id]
+              };
+            }
+
+            // Update work item assignment
+            const workItemIndex = updatedWorkItems.findIndex(wi => wi.id === itemToMove.id);
+            if (workItemIndex >= 0) {
+              updatedWorkItems[workItemIndex] = {
+                ...updatedWorkItems[workItemIndex],
+                assignedSprints: [targetSprint.sprintData.sprint.id]
+              };
+            }
+
+            // Update available capacity tracking with smart skill assignment
+            targetSprint.availableCapacity.total -= itemPoints;
+            if (itemToMove.requiredSkills.includes('frontend' as any)) {
+              if (targetSprint.availableCapacity.frontend >= itemPoints) {
+                targetSprint.availableCapacity.frontend -= itemPoints;
+              } else {
+                // Use backend capacity for flexible assignment
+                targetSprint.availableCapacity.backend -= itemPoints;
+              }
+            } else if (itemToMove.requiredSkills.includes('backend' as any)) {
+              if (targetSprint.availableCapacity.backend >= itemPoints) {
+                targetSprint.availableCapacity.backend -= itemPoints;
+              } else {
+                // Use frontend capacity for flexible assignment
+                targetSprint.availableCapacity.frontend -= itemPoints;
+              }
+            }
+
+            passOptimizations++;
+            totalOptimizationsMade++;
+            
+            console.log(`      ✅ Move complete. Remaining capacity: ${targetSprint.availableCapacity.total.toFixed(1)} points`);
+            
+            // Stop if this sprint is now maximally utilized
+            if (targetSprint.availableCapacity.total < 0.01) break;
+          }
+
+          // Stop if we've made lots of moves in this pass
+          if (passOptimizations >= 30) break;
+        }
+
+        // Stop if this pass has made enough changes
+        if (passOptimizations >= 30) break;
+      }
+
+      console.log(`   🏁 Pass ${passNumber} complete: ${passOptimizations} optimizations made`);
+      
+      // If no optimizations were made in this pass, we're done
+      if (passOptimizations === 0) {
+        console.log(`   🎯 No more optimizations possible. Stopping.`);
+        break;
+      }
+      
+      passNumber++;
+    }
+
+    console.log(`🏆 ULTRA-AGGRESSIVE OPTIMIZATION COMPLETE: Made ${totalOptimizationsMade} total optimizations across ${passNumber - 1} passes to maximize sprint utilization.`);
+    
+    // Final capacity analysis
+    console.log(`📊 FINAL CAPACITY ANALYSIS:`);
+    existingSprints.slice(0, 5).forEach((sprintData, idx) => {
+      const updatedSprint = updatedSprints.find(s => s.id === sprintData.sprint.id);
+      const sprintWorkItems = (updatedSprint?.workItems || [])
+        .map(itemId => typeof itemId === 'string' ? updatedWorkItems.find(wi => wi.id === itemId) : itemId)
+        .filter((item): item is WorkItem => !!item);
+      const assignedTotal = sprintWorkItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+      const utilizationPercent = (assignedTotal / sprintData.capacity) * 100;
+      console.log(`   ${sprintData.sprint.name}: ${utilizationPercent.toFixed(1)}% (${assignedTotal}/${sprintData.capacity} pts)`);
     });
 
     // Calculate possible end date based on the last sprint with assigned work items
@@ -2399,7 +2779,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         // Apply enhanced skill detection for epic children
                         const detectedSkills = detectSkillsFromContent(child);
 
-                        const isCompleted = child.status === 'Completed';
+                        const isCompleted = isItemUnavailableForAssignment(child);
                         const isAssigned = child.assignedSprints.length > 0;
                         const isDraggable = !isAssigned && !isCompleted;
 
@@ -2799,11 +3179,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         )}
                                         <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
                                         {/* Always show current Jira status */}
-                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                                          (item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? 'bg-green-100 text-green-800' :
+                                          (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? 'bg-purple-100 text-purple-800' :
+                                          (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? 'bg-red-100 text-red-800' :
                                           item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
                                             'bg-gray-100 text-gray-800'
                                           }`}>
-                                          {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
+                                          {(item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? '✅ ' : 
+                                           (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? '🚀 ' :
+                                           (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? '❌ ' : ''}{item.jiraStatus || item.status}
                                         </span>
                                       </div>
                                       {/* Show priority for epic items or epic children */}
