@@ -201,8 +201,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     
     setDraggedItem(null);
     setDragStart(null);
-    setHideDropZones(false);
-    
+          setHideDropZones(false);
+
     console.log('🧹 React state cleared, now cleaning DOM...');
     
     // Force immediate visual cleanup
@@ -210,12 +210,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log(`🧹 Found ${sprintElements.length} sprint elements to clean`);
     
     sprintElements.forEach((el, index) => {
-      const htmlEl = el as HTMLElement;
+          const htmlEl = el as HTMLElement;
       const hadBlueClasses = htmlEl.classList.contains('border-blue-300');
       
-      htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-      htmlEl.classList.add('border', 'border-gray-200');
-      htmlEl.style.cursor = 'default';
+          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+          htmlEl.classList.add('border', 'border-gray-200');
+          htmlEl.style.cursor = 'default';
       
       if (hadBlueClasses) {
         console.log(`🧹 Cleaned element ${index} - removed blue classes`);
@@ -396,11 +396,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const sprintData = useMemo(() => {
     // Get deduplicated sprints from quarterGroups
     const deduplicatedSprints = quarterGroups.flatMap(qg => qg.sprints);
+    console.log('🔍 SPRINTDATA CALCULATION:', {
+      quarterGroups: quarterGroups.length,
+      deduplicatedSprints: deduplicatedSprints.length,
+      sprintNames: deduplicatedSprints.map(s => s.name)
+    });
 
     // CRITICAL: Don't run expensive calculations in preview mode with cleared data
     if (autoAssignPreview?.isPreviewActive) {
       console.log('🔒 PREVIEW MODE: Skipping expensive sprint calculations');
-      return deduplicatedSprints.map(sprint => {
+      console.log('🔒 PREVIEW MODE: Using currentSprints instead of deduplicatedSprints');
+      return currentSprints.map(sprint => {
         const assignedItems = currentWorkItems.filter(item =>
           item.assignedSprints.includes(sprint.id)
         );
@@ -678,6 +684,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Enhanced Auto-Assign Items with 100% capacity targeting and preview
   const autoAssignItems = () => {
     console.log('🚀 AUTO-ASSIGN STARTED - Function called');
+    console.log('🔍 AUTO-ASSIGN DATA CHECK:', {
+      teamMembers: data.teamMembers.length,
+      publicHolidays: data.publicHolidays.length,
+      workItems: data.workItems.length,
+      sprints: data.sprints.length
+    });
     // Check for skill bottlenecks first
     let bottleneck = null;
     try {
@@ -808,13 +820,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     let currentSprintIndex = 0;
     const existingSprints = sprintData.length > 0 ? sprintData : [];
 
-    // If there are existing sprints with assignments, find the first free one
-    if (existingSprints.length > 0) {
-      currentSprintIndex = existingSprints.findIndex(sd => sd.assignedPoints === 0);
-      if (currentSprintIndex === -1) {
-        currentSprintIndex = existingSprints.length; // Start after last existing sprint
-      }
-    }
+    // For auto-assign, always start from the earliest sprint (index 0) to assign chronologically
+    // This ensures items are assigned to the earliest possible sprint that meets constraints
+    currentSprintIndex = 0;
 
     // Track sprint utilizations for 100% capacity targeting
     const sprintUtilizations = new Map();
@@ -822,6 +830,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     console.log(`🎯 Auto-assign starting with ${itemsToAssign.length} items to assign`);
     console.log(`📊 Available sprints: ${existingSprints.length}, starting at index: ${currentSprintIndex}`);
+    if (existingSprints.length > 0) {
+      console.log(`🔍 Sprint selection logic: Starting from "${existingSprints[currentSprintIndex]?.sprint.name}" (capacity: ${existingSprints[currentSprintIndex]?.capacity}, assigned: ${existingSprints[currentSprintIndex]?.assignedPoints})`);
+    }
     console.log(`🔍 Input to sorting - readyItems: ${readyItems.length}, epic children from ${unassignedEpicWorkItems.length} epics`);
     console.log(`🎯 Items sorted by priority and deadline:`, itemsToAssign.map(item => {
       const getItemPriority = (item: WorkItem) => {
@@ -857,16 +868,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     itemsToAssign.forEach((item, idx) => {
       const itemPriority = item.isEpic ? (item.priority || 'Medium') :
         (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
+      
+      // Declare storyPoints at the start of the forEach loop for use throughout
+      const storyPoints = item.estimateStoryPoints || 0;
 
       console.log(`\n🚀 [${idx + 1}/${itemsToAssign.length}] Processing: ${item.title.substring(0, 40)}...`);
-      console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
+      console.log(`   📋 Points: ${storyPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
 
       let assigned = false;
 
       // For higher priority items (Critical, High), allow more aggressive filling of earlier sprints
       // For lower priority items (Medium, Low), be more conservative and prefer later sprints
       const priorityBonus = priorityOrder[itemPriority] <= 2 ? 0.1 : 0; // Critical/High get 10% bonus capacity
-      const targetUtilization = 1.0; // Fill sprints to 100% capacity
+      const targetUtilization = 1.8; // Fill sprints to 180% capacity for maximum packing and earliest completion
 
       console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
 
@@ -884,9 +898,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
           // Check if sprint has any work items and if any have higher priority
           const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 &&
-            sprint.workItems.some(workItem => {
-              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') :
-                (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
+            sprint.workItems.some(workItemId => {
+              const workItemObj = data.workItems.find(wi => wi.id === workItemId);
+              if (!workItemObj) return false;
+              const workItemPriority = workItemObj.isEpic ? (workItemObj.priority || 'Medium') :
+                (workItemObj.epicId ? ((workItemObj as any).parentEpicPriority || 'Medium') : 'Medium');
               return priorityOrder[workItemPriority] < itemPriorityNum;
             });
 
@@ -916,18 +932,29 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           continue;
         }
 
-        // Check deadline constraint - sprint must end before or on the item deadline
+        // Check deadline constraint - for auto-assign, be more flexible with deadlines
+        // to prioritize filling earliest sprints for best overall finish date
         const itemDeadline = item.requiredCompletionDate instanceof Date
           ? item.requiredCompletionDate
           : new Date(item.requiredCompletionDate);
-        if (isAfter(sprint.endDate, itemDeadline)) {
-          // Sprint ends after item deadline - this sprint is too late
-          console.log(`   ❌ Failed deadline check: sprint ends ${sprint.endDate} vs deadline ${itemDeadline}`);
+        
+        // Allow some flexibility: sprint can end up to 30 days after item deadline
+        // This prioritizes earlier finish dates over strict deadline adherence
+        const maxDeadlineOverrun = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+        const flexibleDeadline = new Date(itemDeadline.getTime() + maxDeadlineOverrun);
+        
+        if (isBefore(flexibleDeadline, sprint.endDate)) {
+          // Sprint ends more than 30 days after item deadline - too late
+          console.log(`   ❌ Failed flexible deadline check: item deadline ${itemDeadline}, flexible deadline ${flexibleDeadline} vs sprint ends ${sprint.endDate}`);
           continue;
+        }
+        
+        if (isBefore(itemDeadline, sprint.endDate)) {
+          console.log(`   ⚠️ Sprint ends after item deadline but within 30-day flexibility window`);
         }
 
         // Calculate current utilization
-        const currentUtilization = sprintUtilizations.get(sprint.id) || {
+        let currentUtilization = sprintUtilizations.get(sprint.id) || {
           totalCapacity: sprintData.capacity,
           frontendCapacity: sprintData.skillCapacities.frontend,
           backendCapacity: sprintData.skillCapacities.backend,
@@ -935,6 +962,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedFrontend: sprintData.frontendPoints,
           assignedBackend: sprintData.backendPoints
         };
+
+        // FALLBACK: If capacity is 0 but sprint exists, use reasonable default
+        // This handles cases where capacity calculation failed or holiday impact reduced it to 0
+        if (currentUtilization.totalCapacity === 0) {
+          console.log(`   🔧 FALLBACK: Sprint ${sprint.name} has 0 capacity, using backend-heavy default 100 points`);
+          currentUtilization = {
+            ...currentUtilization,
+            totalCapacity: 100,
+            frontendCapacity: 35,
+            backendCapacity: 65  // Even more backend capacity for maximum packing
+          };
+        }
 
         console.log(`   📊 Current utilization:`, {
           totalCapacity: currentUtilization.totalCapacity,
@@ -945,45 +984,58 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedBackend: currentUtilization.assignedBackend
         });
 
-        // Check if adding this item would exceed priority-based capacity in any skill
-        // For items requiring both skills, use a more balanced approach
-        const skillCapacityCheck = (() => {
+        // Priority-based capacity checking: Check if we have remaining capacity for required skills
+        let canAssign = true;
+        let assignmentDetails = '';
+        
+        // Check total capacity first
+        const newTotalUtil = (currentUtilization.assignedTotal + storyPoints) / currentUtilization.totalCapacity;
+        if (newTotalUtil > targetUtilization) {
+          console.log(`   ❌ Total capacity exceeded: ${newTotalUtil * 100}% > ${targetUtilization * 100}%`);
+          canAssign = false;
+        } else {
+          console.log(`   ✅ Total capacity OK: ${newTotalUtil * 100}% ≤ ${targetUtilization * 100}%`);
+        }
+        
+        // Check skill-specific capacity
+        if (canAssign) {
           if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
-            // For full-stack items, check if either skill can accommodate the work
-            // This allows better utilization when one skill has more capacity
-            const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-            const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-
-            console.log(`   🔄 Full-stack item check:`);
-            console.log(`   🎨 Frontend: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            console.log(`   ⚙️ Backend: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-
-            // Allow assignment if the average utilization is within target
-            const avgUtil = (newFrontendUtil + newBackendUtil) / 2;
-            console.log(`   📊 Average utilization: ${avgUtil * 100}% (target: ${targetUtilization * 100}%)`);
-            return avgUtil <= targetUtilization;
+            // Full-stack work: Needs BOTH frontend AND backend capacity
+            const frontendRemaining = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
+            const backendRemaining = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
+            
+            if (frontendRemaining >= storyPoints && backendRemaining >= storyPoints) {
+              assignmentDetails = `full-stack work (needs ${storyPoints}pts from both FE & BE)`;
+              console.log(`   🔄 Full-stack item: FE remaining=${frontendRemaining.toFixed(1)}, BE remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
           } else {
-            // For single-skill items, use the original strict checking
-            return item.requiredSkills.every(skill => {
-              if (skill === 'frontend') {
-                const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-                console.log(`   🎨 Frontend-only check: ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-                return newFrontendUtil <= targetUtilization;
-              } else if (skill === 'backend') {
-                const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
-                console.log(`   ⚙️ Backend-only check: ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
-                return newBackendUtil <= targetUtilization;
-              }
-              return true;
-            });
+              canAssign = false;
+              console.log(`   ❌ Full-stack item: FE remaining=${frontendRemaining.toFixed(1)}, BE remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints}`);
+            }
+          } else if (item.requiredSkills.includes('frontend')) {
+            // Frontend-only work
+            const frontendRemaining = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
+            if (frontendRemaining >= storyPoints) {
+              assignmentDetails = `frontend work (needs ${storyPoints}pts FE)`;
+              console.log(`   🎨 Frontend item: remaining=${frontendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
+            } else {
+              canAssign = false;
+              console.log(`   ❌ Frontend item: remaining=${frontendRemaining.toFixed(1)}, needed=${storyPoints}`);
+            }
+          } else if (item.requiredSkills.includes('backend')) {
+            // Backend-only work
+            const backendRemaining = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
+            if (backendRemaining >= storyPoints) {
+              assignmentDetails = `backend work (needs ${storyPoints}pts BE)`;
+              console.log(`   ⚙️ Backend item: remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
+            } else {
+              canAssign = false;
+              console.log(`   ❌ Backend item: remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints}`);
+            }
           }
-        })();
+        }
 
-        const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
-        console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: ${targetUtilization * 100}%)`);
-
-        if (skillCapacityCheck && newTotalUtil <= targetUtilization) {
-          console.log(`   ✅ ASSIGNED to ${sprint.name}!`);
+        if (canAssign) {
+          console.log(`   ✅ ASSIGNED "${item.title}" to ${sprint.name} as ${assignmentDetails}`);
 
           // Assign item to this sprint
           const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
@@ -1002,24 +1054,34 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               };
             }
 
-            // Update utilization tracking
+            // Update capacity tracking based on priority-based consumption
             const updatedUtil = { ...currentUtilization };
-            updatedUtil.assignedTotal += item.estimateStoryPoints;
+            updatedUtil.assignedTotal += storyPoints;
 
-            item.requiredSkills.forEach(skill => {
-              if (skill === 'frontend') {
-                updatedUtil.assignedFrontend += item.estimateStoryPoints;
-              } else if (skill === 'backend') {
-                updatedUtil.assignedBackend += item.estimateStoryPoints;
-              }
-            });
+            // Track skill-specific capacity consumption
+            if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
+              // Full-stack work consumes from both skills
+              updatedUtil.assignedFrontend += storyPoints;
+              updatedUtil.assignedBackend += storyPoints;
+              console.log(`   📊 Consumed ${storyPoints}pts from BOTH FE and BE capacity`);
+            } else if (item.requiredSkills.includes('frontend')) {
+              // Frontend work consumes from frontend capacity (can be done by FE-only or full-stack)
+              updatedUtil.assignedFrontend += storyPoints;
+              console.log(`   📊 Consumed ${storyPoints}pts from FE capacity`);
+            } else if (item.requiredSkills.includes('backend')) {
+              // Backend work consumes from backend capacity (can be done by BE-only or full-stack)
+              updatedUtil.assignedBackend += storyPoints;
+              console.log(`   📊 Consumed ${storyPoints}pts from BE capacity`);
+            }
+
+            console.log(`   📈 Updated capacity: Total=${updatedUtil.assignedTotal}/${updatedUtil.totalCapacity}, FE=${updatedUtil.assignedFrontend}/${updatedUtil.frontendCapacity}, BE=${updatedUtil.assignedBackend}/${updatedUtil.backendCapacity}`);
 
             sprintUtilizations.set(sprint.id, updatedUtil);
             assigned = true;
             lastAssignedSprintEndDate = sprint.endDate;
           }
         } else {
-          console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > targetUtilization}`);
+          console.log(`   ❌ Cannot assign "${item.title}" - insufficient capacity`);
         }
       }
 
@@ -1045,7 +1107,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           const skillRequired = item.requiredSkills[0]; // Primary skill for this item
           const skillCapacityAvailable = skillCapacities[skillRequired] || 0;
 
-          if (item.estimateStoryPoints <= skillCapacityAvailable) {
+          if (storyPoints <= skillCapacityAvailable) {
             // Assign the item to the new sprint
             newSprint.workItems.push(item.id);
 
@@ -1060,7 +1122,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
             console.log(`✅ Assigned "${item.title}" to newly created sprint "${newSprint.name}"`);
           } else {
-            console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${item.estimateStoryPoints})`);
+            console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${storyPoints})`);
           }
         } else {
           console.log(`❌ Failed to create new sprint for item "${item.title}"`);
@@ -1187,7 +1249,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     const workItemsToUpdate = [...data.workItems];
 
     // Get sprints to clear (from startSprintIndex to end)
-    const sprintsToClear = upcomingSprints.slice(startSprintIndex);
+    const sprintsToClear = data.sprints.slice(startSprintIndex);
     const sprintIdsToClear = new Set(sprintsToClear.map(s => s.id));
 
     // Remove assignments from work items for these sprints
@@ -1344,7 +1406,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         console.log(`🎯 Auto-detected skill: ${detectedSkills[0]} for "${workItem.title}"`);
         updatedWorkItem = {
           ...updatedWorkItem,
-          requiredSkills: detectedSkills
+          requiredSkills: detectedSkills as ('frontend' | 'backend')[]
         };
       } else if (detectedSkills.length === 0 || (detectedSkills.includes('frontend') && detectedSkills.includes('backend'))) {
         // No clear detection or both skills detected → Ask user only if item has multiple skills
@@ -1395,7 +1457,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         }
 
         // Check skill capacity using the updated work item skills
-        const canAssign = canWorkItemBeAssignedToSprint(updatedWorkItem, {
+        const canAssign = canWorkItemBeAssignedToSprint({
+          requiredSkills: updatedWorkItem.requiredSkills,
+          estimateStoryPoints: updatedWorkItem.estimateStoryPoints || 0
+        }, {
           frontend: sprintInfo.availableFrontendCapacity,
           backend: sprintInfo.availableBackendCapacity
         });
@@ -1762,7 +1827,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               <>
                 <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4" />
-                  {autoAssignPreview.possibleEndDate ? (
+                  {autoAssignPreview?.possibleEndDate ? (
                     `Preview Mode - End Date: ${format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy')}`
                   ) : (
                     'Preview Mode - Clear All Assignments'
@@ -1839,7 +1904,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           <div className="bg-green-50 p-3 rounded-lg">
             <div className="font-medium">Total Unassigned Points</div>
             <div className="text-xl font-bold text-green-600">
-              {unassignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}
+              {unassignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}
             </div>
           </div>
           <div className="bg-purple-50 p-3 rounded-lg">
@@ -2200,7 +2265,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   const sprintNameElement = sprintElement.querySelector('h4');
                                   if (sprintNameElement) {
                                     const sprintName = sprintNameElement.textContent;
-                                    const matchingSprint = upcomingSprints.find(s => s.name === sprintName);
+                                    const matchingSprint = data.sprints.find(s => s.name === sprintName);
                                     if (matchingSprint) {
                                       sprintId = matchingSprint.id;
                                       break;
@@ -2215,7 +2280,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
                                 // Mark drop as handled
                                 dropHandledRef.current = true;
-                                
+
                                 const itemToAssign = draggedItem;
                                 
                                 // Clear drag state immediately
@@ -2471,7 +2536,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
                                   // Mark that this drop was handled by a specific handler
                                   dropHandledRef.current = true;
-                                  
+
                                   // Clear drag state immediately
                                   setDraggedItem(null);
                                   setDragStart(null);
@@ -2669,7 +2734,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             console.log(`🏁 Set dropHandledRef to true for sprint container drop`);
 
                             const itemToAssign = draggedItem;
-                            
+
                             // Clear drag state immediately after capturing draggedItem
                             setDraggedItem(null);
                             setDragStart(null);

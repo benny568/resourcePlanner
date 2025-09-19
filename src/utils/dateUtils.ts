@@ -234,14 +234,17 @@ export const calculateSprintCapacity = (
       const memberContribution = member.capacity / 100;
       const memberImpact = (overlapDays / sprintDays) * memberContribution;
       
-      console.log(`      📉 "${holiday.name}": ${overlapDays} days out of ${sprintDays} = -${(memberImpact * 100).toFixed(1)}% impact`);
+      console.log(`      📉 "${holiday.description}": ${overlapDays} days out of ${sprintDays} = -${(memberImpact * 100).toFixed(1)}% impact`);
       personalHolidayReduction += memberImpact;
     });
   });
 
-  const capacityAfterPersonalHolidays = capacity * (1 - personalHolidayReduction);
+  // Cap personal holiday reduction at 100% (can't lose more than all capacity)
+  const cappedPersonalHolidayReduction = Math.min(personalHolidayReduction, 1.0);
+  const capacityAfterPersonalHolidays = capacity * (1 - cappedPersonalHolidayReduction);
   console.log(`📊 STEP 5: After Personal Holidays`);
-  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}%`);
+  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}% (capped at 100%)`);
+  console.log(`   • Applied impact: -${(cappedPersonalHolidayReduction * 100).toFixed(1)}%`);
   console.log(`   • Capacity: ${capacity.toFixed(1)} → ${capacityAfterPersonalHolidays.toFixed(1)} points`);
   
   capacity = capacityAfterPersonalHolidays;
@@ -350,15 +353,18 @@ export const calculateSkillSpecificCapacity = (
       const memberSkillContribution = member.capacity / skillTeamCapacity; // Member's share of this skill's capacity
       const memberImpact = (holidayWorkingDays / sprintWorkingDaysTotal) * memberSkillContribution;
       
-      console.log(`      📉 "${holiday.name}": ${holidayWorkingDays} working days × ${(memberSkillContribution * 100).toFixed(1)}% contribution = -${(memberImpact * 100).toFixed(1)}% impact`);
+      console.log(`      📉 "${holiday.description}": ${holidayWorkingDays} working days × ${(memberSkillContribution * 100).toFixed(1)}% contribution = -${(memberImpact * 100).toFixed(1)}% impact`);
       
       personalHolidayReduction += memberImpact;
     });
   });
 
-  const capacityAfterPersonalHolidays = capacity * (1 - personalHolidayReduction);
+  // Cap personal holiday reduction at 100% (can't lose more than all capacity)
+  const cappedPersonalHolidayReduction = Math.min(personalHolidayReduction, 1.0);
+  const capacityAfterPersonalHolidays = capacity * (1 - cappedPersonalHolidayReduction);
   console.log(`📊 STEP 5: After Personal Holidays for ${skill.charAt(0).toUpperCase() + skill.slice(1)}`);
-  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}%`);
+  console.log(`   • Total personal holiday impact: -${(personalHolidayReduction * 100).toFixed(1)}% (capped at 100%)`);
+  console.log(`   • Applied impact: -${(cappedPersonalHolidayReduction * 100).toFixed(1)}%`);
   console.log(`   • Capacity: ${capacity.toFixed(1)} → ${capacityAfterPersonalHolidays.toFixed(1)} points`);
   
   capacity = capacityAfterPersonalHolidays;
@@ -383,23 +389,52 @@ export const calculateSprintSkillCapacities = (
   teamMembers: TeamMember[],
   publicHolidays: PublicHoliday[]
 ): { frontend: number; backend: number; total: number } => {
-  const frontend = calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'frontend');
-  const backend = calculateSkillSpecificCapacity(sprint, teamMembers, publicHolidays, 'backend');
+  console.log(`🎯 ═══ PRIORITY-BASED CAPACITY CALCULATION: ${sprint.name} ═══`);
   
-  // Total should be the sum of individual skill capacities for consistency
-  const total = frontend + backend;
+  // Calculate basic capacity with holiday adjustments
+  const baseCapacity = calculateSprintCapacity(sprint, teamMembers, publicHolidays);
   
-  console.log(`🔍 calculateSprintSkillCapacities FINAL for ${sprint.name}:`, {
-    frontend,
-    backend,
-    total,
-    individualSum: frontend + backend
-  });
+  // Separate team members by skill type
+  const frontendOnlyMembers = teamMembers.filter(member => 
+    member.skills.includes('frontend') && !member.skills.includes('backend')
+  );
+  const backendOnlyMembers = teamMembers.filter(member => 
+    member.skills.includes('backend') && !member.skills.includes('frontend')
+  );
+  const fullStackMembers = teamMembers.filter(member => 
+    member.skills.includes('frontend') && member.skills.includes('backend')
+  );
+  
+  console.log(`👥 Team Composition:`);
+  console.log(`   • Frontend-only: ${frontendOnlyMembers.length} members (${frontendOnlyMembers.map(m => `${m.name}(${m.capacity}pts)`).join(', ') || 'none'})`);
+  console.log(`   • Backend-only: ${backendOnlyMembers.length} members (${backendOnlyMembers.map(m => `${m.name}(${m.capacity}pts)`).join(', ') || 'none'})`);
+  console.log(`   • Full-stack: ${fullStackMembers.length} members (${fullStackMembers.map(m => `${m.name}(${m.capacity}pts)`).join(', ') || 'none'})`);
+  
+  // Calculate available capacity for each skill
+  // Frontend work can be done by: frontend-only + full-stack members
+  // Backend work can be done by: backend-only + full-stack members
+  const totalTeamCapacity = teamMembers.reduce((total, member) => total + member.capacity, 0);
+  const capacityRatio = baseCapacity / totalTeamCapacity; // Account for holidays
+  
+  const frontendOnlyCapacity = frontendOnlyMembers.reduce((total, member) => total + member.capacity, 0) * capacityRatio;
+  const backendOnlyCapacity = backendOnlyMembers.reduce((total, member) => total + member.capacity, 0) * capacityRatio;
+  const fullStackCapacity = fullStackMembers.reduce((total, member) => total + member.capacity, 0) * capacityRatio;
+  
+  // Available capacity for each skill type
+  const frontendAvailable = frontendOnlyCapacity + fullStackCapacity;
+  const backendAvailable = backendOnlyCapacity + fullStackCapacity;
+  
+  console.log(`📊 Skill-based Capacity (after holidays):`);
+  console.log(`   • Frontend available: ${frontendAvailable.toFixed(1)} points (${frontendOnlyCapacity.toFixed(1)} frontend-only + ${fullStackCapacity.toFixed(1)} full-stack)`);
+  console.log(`   • Backend available: ${backendAvailable.toFixed(1)} points (${backendOnlyCapacity.toFixed(1)} backend-only + ${fullStackCapacity.toFixed(1)} full-stack)`);
+  console.log(`   • Total sprint capacity: ${baseCapacity.toFixed(1)} points`);
+  
+  console.log(`🎯 ═══ PRIORITY-BASED CAPACITY FINAL: ${sprint.name} ═══`);
   
   return {
-    frontend,
-    backend,
-    total
+    frontend: frontendAvailable,
+    backend: backendAvailable,
+    total: baseCapacity
   };
 };
 
