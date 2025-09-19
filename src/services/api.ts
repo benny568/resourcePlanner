@@ -271,6 +271,7 @@ export const transformers = {
     endDate: sprint.endDate.toISOString(),
     plannedVelocity: sprint.plannedVelocity,
     actualVelocity: sprint.actualVelocity,
+    status: sprint.status,
   }),
   
   // Convert backend sprint to frontend format

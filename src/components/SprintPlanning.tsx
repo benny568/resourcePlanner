@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
 import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter, calculateAvailableDevelopmentDays } from '../utils/dateUtils';
+import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
@@ -38,51 +38,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const [selectedSprint, setSelectedSprint] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number, y: number, itemId: string } | null>(null);
-  
-  // Refs to access current drag state in global handlers (avoid stale closures)
-  const draggedItemRef = useRef<string | null>(null);
-  const dragStartRef = useRef<{ x: number, y: number, itemId: string } | null>(null);
-  
-  // Force visual cleanup function
-  const forceCleanupVisualState = () => {
-    console.log('🧹 MANUAL CLEANUP: Forcing visual state cleanup');
-    
-    // Clear React state
-    setDraggedItem(null);
-    setDragStart(null);
-    setHideDropZones(false);
-    
-    // Clear DOM styling
-    document.querySelectorAll('[data-sprint-id]').forEach((el) => {
-      const htmlEl = el as HTMLElement;
-      htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-      htmlEl.classList.add('border', 'border-gray-200');
-      htmlEl.style.minHeight = 'auto';
-      htmlEl.style.cursor = 'default';
-    });
-    
-    // Reset dragged item visual effects
-    document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
-      el.style.opacity = '1';
-      el.style.transform = 'scale(1)';
-      el.style.pointerEvents = 'auto';
-    });
-    
-    // Reset body cursor
-    document.body.style.cursor = 'default';
-  };
-  
-  // Keep refs updated
-  React.useEffect(() => {
-    draggedItemRef.current = draggedItem;
-  }, [draggedItem]);
-  
-  React.useEffect(() => {
-    dragStartRef.current = dragStart;
-  }, [dragStart]);
-  
-  const [expandedEpicsUnassigned, setExpandedEpicsUnassigned] = useState<Set<string>>(new Set());
-  const [expandedEpicsSprint, setExpandedEpicsSprint] = useState<Set<string>>(new Set());
+  const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
   // Initialize all sprints as collapsed by default
   const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [hideDropZones, setHideDropZones] = useState(false);
@@ -191,88 +147,123 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     }
   };
 
-  // Manual cleanup function with detailed debugging
-  const clearDragState = () => {
-    console.log('🧹 MANUAL CLEANUP STARTING: Current state:', {
-      draggedItem,
-      dragStart,
-      hideDropZones
-    });
-    
-    setDraggedItem(null);
-    setDragStart(null);
-          setHideDropZones(false);
-
-    console.log('🧹 React state cleared, now cleaning DOM...');
-    
-    // Force immediate visual cleanup
-    const sprintElements = document.querySelectorAll('[data-sprint-id]');
-    console.log(`🧹 Found ${sprintElements.length} sprint elements to clean`);
-    
-    sprintElements.forEach((el, index) => {
-          const htmlEl = el as HTMLElement;
-      const hadBlueClasses = htmlEl.classList.contains('border-blue-300');
-      
-          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
-          htmlEl.classList.add('border', 'border-gray-200');
-          htmlEl.style.cursor = 'default';
-      
-      if (hadBlueClasses) {
-        console.log(`🧹 Cleaned element ${index} - removed blue classes`);
-      }
-    });
-    
-    console.log('🧹 MANUAL CLEANUP COMPLETED');
-  };
-
-  // Add escape key to clear drag state
+  // Initialize drag and drop system  
   React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      console.log(`⌨️ KEY DOWN: ${e.key}`);
-      if (e.key === 'Escape') {
-        console.log('🚨 ESCAPE KEY PRESSED: About to clear drag state');
-        clearDragState();
-      }
-    };
-    
-    console.log('📎 ADDING ESCAPE KEY LISTENER');
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      console.log('📎 REMOVING ESCAPE KEY LISTENER');
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [clearDragState]);
-
-  // Simple drag and drop system 
-  React.useEffect(() => {
-    console.log('🎯 Drag and Drop System Initialized');
+    console.log('🎯 NEW Drag and Drop System Initialized');
   }, []);
 
+  // Global pointer handlers for cleanup (simplified and less aggressive)
+  React.useEffect(() => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      // Check if we should start dragging based on mouse movement
+      if (dragStart && !draggedItem) {
+        const distance = Math.sqrt(
+          Math.pow(e.clientX - dragStart.x, 2) +
+          Math.pow(e.clientY - dragStart.y, 2)
+        );
 
-  // Toggle epic expansion in unassigned section
-  const toggleEpicExpansionUnassigned = (epicId: string) => {
-    const newExpanded = new Set(expandedEpicsUnassigned);
+        console.log(`↔️ POINTER MOVE: Distance ${distance.toFixed(1)}px from start`);
+
+        // Start drag when mouse moves more than 5 pixels
+        if (distance > 5) {
+          console.log(`🎯 DRAGGING: Starting drag for item "${dragStart.itemId}"`);
+          setDraggedItem(dragStart.itemId);
+          setHideDropZones(false);
+
+          // Apply visual effects to the dragged item
+          const draggedElement = document.querySelector(`[data-item-id="${dragStart.itemId}"]`) as HTMLElement;
+          if (draggedElement) {
+            draggedElement.style.opacity = '0.7';
+            draggedElement.style.transform = 'scale(0.98)';
+            draggedElement.style.pointerEvents = 'none';
+          }
+        }
+      }
+    };
+
+    const handleGlobalPointerUp = () => {
+      console.log(`🔼 POINTER UP: dragStart=${!!dragStart}, draggedItem=${!!draggedItem}`);
+
+      // Always cleanup drag start state
+      setDragStart(null);
+
+      // Only cleanup if no specific handler already handled the drop
+      if (draggedItem && !dropHandledRef.current) {
+        console.log('🔄 Global pointer up - resetting drag state');
+
+        // Remove blue border from ALL sprint containers immediately
+        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+          htmlEl.classList.add('border', 'border-gray-200');
+          htmlEl.style.minHeight = 'auto';
+          htmlEl.style.cursor = 'default';
+        });
+
+        setDraggedItem(null);
+        setHideDropZones(false);
+
+        // Reset any stuck visual states
+        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
+          el.style.opacity = '1';
+          el.style.transform = 'scale(1)';
+          el.style.pointerEvents = 'auto';
+        });
+      }
+      // Reset the flag for next drag operation
+      dropHandledRef.current = false;
+    };
+
+    const handleWindowLeave = () => {
+      // Only cancel drag when actually leaving the browser window
+      if (draggedItem) {
+        console.log('🔄 Window left: resetting drag state');
+
+        // Remove blue border from ALL sprint containers immediately
+        document.querySelectorAll('[data-sprint-id]').forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          htmlEl.classList.remove('border-2', 'border-blue-300', 'bg-blue-50/30', 'shadow-md', 'cursor-copy', 'ring-1', 'ring-blue-200');
+          htmlEl.classList.add('border', 'border-gray-200');
+          htmlEl.style.minHeight = 'auto';
+          htmlEl.style.cursor = 'default';
+        });
+
+        setDraggedItem(null);
+        setDragStart(null);
+        setHideDropZones(false);
+
+        document.querySelectorAll('[style*="opacity: 0.7"]').forEach((el: any) => {
+          el.style.opacity = '1';
+          el.style.transform = 'scale(1)';
+          el.style.pointerEvents = 'auto';
+        });
+      }
+    };
+
+    // Add all pointer event handlers
+    document.addEventListener('pointermove', handleGlobalPointerMove);
+    document.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('blur', handleWindowLeave); // Window loses focus
+
+    return () => {
+      document.removeEventListener('pointermove', handleGlobalPointerMove);
+      document.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('blur', handleWindowLeave);
+    };
+  }, [dragStart, draggedItem]); // Add dependencies for drag state
+
+  // Toggle epic expansion
+  const toggleEpicExpansion = (epicId: string) => {
+    const newExpanded = new Set(expandedEpics);
     if (newExpanded.has(epicId)) {
       newExpanded.delete(epicId);
-      console.log(`🔽 COLLAPSING UNASSIGNED EPIC: ${epicId}`);
+      console.log(`🔽 COLLAPSING EPIC: ${epicId}`);
     } else {
       newExpanded.add(epicId);
-      console.log(`🔼 EXPANDING UNASSIGNED EPIC: ${epicId}`);
+      console.log(`🔼 EXPANDING EPIC: ${epicId}`);
     }
-    setExpandedEpicsUnassigned(newExpanded);
-  };
-
-  // Toggle epic expansion in sprint section
-  const toggleEpicExpansionSprint = (epicId: string) => {
-    const newExpanded = new Set(expandedEpicsSprint);
-    if (newExpanded.has(epicId)) {
-      newExpanded.delete(epicId);
-      console.log(`🔽 COLLAPSING SPRINT EPIC: ${epicId}`);
-    } else {
-      newExpanded.add(epicId);
-      console.log(`🔼 EXPANDING SPRINT EPIC: ${epicId}`);
-    }
-    setExpandedEpicsSprint(newExpanded);
+    setExpandedEpics(newExpanded);
+    console.log(`📋 EXPANDED EPICS:`, Array.from(newExpanded));
   };
 
   // Toggle sprint expansion
@@ -331,7 +322,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     !item.epicId   // Not an epic child (they'll be grouped under parent epics)
   );
 
-
+  // TEMP DEBUG: Check what's in unassigned items
+  console.log('📋 Sample unassigned items:', unassignedItems.slice(0, 5).map(item => ({
+    id: item.id,
+    title: item.title.substring(0, 40),
+    isEpic: item.isEpic,
+    epicId: item.epicId,
+    jiraId: item.jiraId,
+    isChild: item.jiraId?.includes('-') && item.title.includes('Child')
+  })));
 
   // Get blocked work items (have unfinished dependencies)
   const blockedItems = getBlockedWorkItems(unassignedItems, currentWorkItems);
@@ -396,17 +395,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   const sprintData = useMemo(() => {
     // Get deduplicated sprints from quarterGroups
     const deduplicatedSprints = quarterGroups.flatMap(qg => qg.sprints);
-    console.log('🔍 SPRINTDATA CALCULATION:', {
-      quarterGroups: quarterGroups.length,
-      deduplicatedSprints: deduplicatedSprints.length,
-      sprintNames: deduplicatedSprints.map(s => s.name)
-    });
 
     // CRITICAL: Don't run expensive calculations in preview mode with cleared data
     if (autoAssignPreview?.isPreviewActive) {
       console.log('🔒 PREVIEW MODE: Skipping expensive sprint calculations');
-      console.log('🔒 PREVIEW MODE: Using currentSprints instead of deduplicatedSprints');
-      return currentSprints.map(sprint => {
+      return deduplicatedSprints.map(sprint => {
         const assignedItems = currentWorkItems.filter(item =>
           item.assignedSprints.includes(sprint.id)
         );
@@ -465,7 +458,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       const assignedItems = currentWorkItems.filter(item =>
         item.assignedSprints.includes(sprint.id)
       );
-      
 
 
 
@@ -492,7 +484,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (combinedItems.length > allAssignedItems.length) {
         console.log(`🔍 REMOVED ${combinedItems.length - allAssignedItems.length} duplicate(s) in sprint "${sprint.name}"`);
       }
-      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
 
       // Calculate skill-specific capacities
       const skillCapacities = calculateSprintSkillCapacities(sprint, data.teamMembers, data.publicHolidays);
@@ -501,8 +493,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Calculate skill-specific assignments
       const frontendItems = allAssignedItems.filter(item => item.requiredSkills.includes('frontend'));
       const backendItems = allAssignedItems.filter(item => item.requiredSkills.includes('backend'));
-      const frontendPoints = frontendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
-      const backendPoints = backendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+      const frontendPoints = frontendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+      const backendPoints = backendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
 
       const utilization = capacity > 0 ? (assignedPoints / capacity) * 100 : 0;
       const frontendUtilization = skillCapacities.frontend > 0 ? (frontendPoints / skillCapacities.frontend) * 100 : 0;
@@ -557,23 +549,23 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     sprintData.forEach(sprintInfo => {
       const assignedItems = sprintInfo.assignedItems;
-      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}`);
+      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}`);
 
       assignedItems.forEach(item => {
         // For overall utilization, count each item only once
-        totalOverallAssigned += (item.estimateStoryPoints || 0);
+        totalOverallAssigned += item.estimateStoryPoints;
 
         // For skill-specific utilization, allocate points based on required skills
         if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
           // Split points between frontend and backend for items requiring both
-          totalFrontendAssigned += (item.estimateStoryPoints || 0) / 2;
-          totalBackendAssigned += (item.estimateStoryPoints || 0) / 2;
+          totalFrontendAssigned += item.estimateStoryPoints / 2;
+          totalBackendAssigned += item.estimateStoryPoints / 2;
         } else if (item.requiredSkills.includes('frontend')) {
           // Frontend-only items
-          totalFrontendAssigned += (item.estimateStoryPoints || 0);
+          totalFrontendAssigned += item.estimateStoryPoints;
         } else if (item.requiredSkills.includes('backend')) {
           // Backend-only items
-          totalBackendAssigned += (item.estimateStoryPoints || 0);
+          totalBackendAssigned += item.estimateStoryPoints;
         }
       });
       totalCapacityAvailable += sprintInfo.capacity;
@@ -684,12 +676,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Enhanced Auto-Assign Items with 100% capacity targeting and preview
   const autoAssignItems = () => {
     console.log('🚀 AUTO-ASSIGN STARTED - Function called');
-    console.log('🔍 AUTO-ASSIGN DATA CHECK:', {
-      teamMembers: data.teamMembers.length,
-      publicHolidays: data.publicHolidays.length,
-      workItems: data.workItems.length,
-      sprints: data.sprints.length
-    });
     // Check for skill bottlenecks first
     let bottleneck = null;
     try {
@@ -820,9 +806,13 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     let currentSprintIndex = 0;
     const existingSprints = sprintData.length > 0 ? sprintData : [];
 
-    // For auto-assign, always start from the earliest sprint (index 0) to assign chronologically
-    // This ensures items are assigned to the earliest possible sprint that meets constraints
-    currentSprintIndex = 0;
+    // If there are existing sprints with assignments, find the first free one
+    if (existingSprints.length > 0) {
+      currentSprintIndex = existingSprints.findIndex(sd => sd.assignedPoints === 0);
+      if (currentSprintIndex === -1) {
+        currentSprintIndex = existingSprints.length; // Start after last existing sprint
+      }
+    }
 
     // Track sprint utilizations for 100% capacity targeting
     const sprintUtilizations = new Map();
@@ -830,9 +820,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     console.log(`🎯 Auto-assign starting with ${itemsToAssign.length} items to assign`);
     console.log(`📊 Available sprints: ${existingSprints.length}, starting at index: ${currentSprintIndex}`);
-    if (existingSprints.length > 0) {
-      console.log(`🔍 Sprint selection logic: Starting from "${existingSprints[currentSprintIndex]?.sprint.name}" (capacity: ${existingSprints[currentSprintIndex]?.capacity}, assigned: ${existingSprints[currentSprintIndex]?.assignedPoints})`);
-    }
     console.log(`🔍 Input to sorting - readyItems: ${readyItems.length}, epic children from ${unassignedEpicWorkItems.length} epics`);
     console.log(`🎯 Items sorted by priority and deadline:`, itemsToAssign.map(item => {
       const getItemPriority = (item: WorkItem) => {
@@ -868,19 +855,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     itemsToAssign.forEach((item, idx) => {
       const itemPriority = item.isEpic ? (item.priority || 'Medium') :
         (item.epicId ? ((item as any).parentEpicPriority || 'Medium') : 'Medium');
-      
-      // Declare storyPoints at the start of the forEach loop for use throughout
-      const storyPoints = item.estimateStoryPoints || 0;
 
       console.log(`\n🚀 [${idx + 1}/${itemsToAssign.length}] Processing: ${item.title.substring(0, 40)}...`);
-      console.log(`   📋 Points: ${storyPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
+      console.log(`   📋 Points: ${item.estimateStoryPoints}, Skills: [${item.requiredSkills.join(', ')}], Priority: ${itemPriority}`);
 
       let assigned = false;
 
       // For higher priority items (Critical, High), allow more aggressive filling of earlier sprints
       // For lower priority items (Medium, Low), be more conservative and prefer later sprints
       const priorityBonus = priorityOrder[itemPriority] <= 2 ? 0.1 : 0; // Critical/High get 10% bonus capacity
-      const targetUtilization = 1.8; // Fill sprints to 180% capacity for maximum packing and earliest completion
+      const targetUtilization = 1.0; // Fill sprints to 100% capacity
 
       console.log(`   🎯 Priority-based targeting: ${targetUtilization * 100}% utilization limit for ${itemPriority} priority`);
 
@@ -898,11 +882,9 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
           // Check if sprint has any work items and if any have higher priority
           const hasHigherPriorityItems = sprint.workItems && sprint.workItems.length > 0 &&
-            sprint.workItems.some(workItemId => {
-              const workItemObj = data.workItems.find(wi => wi.id === workItemId);
-              if (!workItemObj) return false;
-              const workItemPriority = workItemObj.isEpic ? (workItemObj.priority || 'Medium') :
-                (workItemObj.epicId ? ((workItemObj as any).parentEpicPriority || 'Medium') : 'Medium');
+            sprint.workItems.some(workItem => {
+              const workItemPriority = workItem.isEpic ? (workItem.priority || 'Medium') :
+                (workItem.epicId ? ((workItem as any).parentEpicPriority || 'Medium') : 'Medium');
               return priorityOrder[workItemPriority] < itemPriorityNum;
             });
 
@@ -932,29 +914,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           continue;
         }
 
-        // Check deadline constraint - for auto-assign, be more flexible with deadlines
-        // to prioritize filling earliest sprints for best overall finish date
+        // Check deadline constraint - sprint must end before or on the item deadline
         const itemDeadline = item.requiredCompletionDate instanceof Date
           ? item.requiredCompletionDate
           : new Date(item.requiredCompletionDate);
-        
-        // Allow some flexibility: sprint can end up to 30 days after item deadline
-        // This prioritizes earlier finish dates over strict deadline adherence
-        const maxDeadlineOverrun = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
-        const flexibleDeadline = new Date(itemDeadline.getTime() + maxDeadlineOverrun);
-        
-        if (isBefore(flexibleDeadline, sprint.endDate)) {
-          // Sprint ends more than 30 days after item deadline - too late
-          console.log(`   ❌ Failed flexible deadline check: item deadline ${itemDeadline}, flexible deadline ${flexibleDeadline} vs sprint ends ${sprint.endDate}`);
+        if (isAfter(sprint.endDate, itemDeadline)) {
+          // Sprint ends after item deadline - this sprint is too late
+          console.log(`   ❌ Failed deadline check: sprint ends ${sprint.endDate} vs deadline ${itemDeadline}`);
           continue;
-        }
-        
-        if (isBefore(itemDeadline, sprint.endDate)) {
-          console.log(`   ⚠️ Sprint ends after item deadline but within 30-day flexibility window`);
         }
 
         // Calculate current utilization
-        let currentUtilization = sprintUtilizations.get(sprint.id) || {
+        const currentUtilization = sprintUtilizations.get(sprint.id) || {
           totalCapacity: sprintData.capacity,
           frontendCapacity: sprintData.skillCapacities.frontend,
           backendCapacity: sprintData.skillCapacities.backend,
@@ -962,18 +933,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedFrontend: sprintData.frontendPoints,
           assignedBackend: sprintData.backendPoints
         };
-
-        // FALLBACK: If capacity is 0 but sprint exists, use reasonable default
-        // This handles cases where capacity calculation failed or holiday impact reduced it to 0
-        if (currentUtilization.totalCapacity === 0) {
-          console.log(`   🔧 FALLBACK: Sprint ${sprint.name} has 0 capacity, using backend-heavy default 100 points`);
-          currentUtilization = {
-            ...currentUtilization,
-            totalCapacity: 100,
-            frontendCapacity: 35,
-            backendCapacity: 65  // Even more backend capacity for maximum packing
-          };
-        }
 
         console.log(`   📊 Current utilization:`, {
           totalCapacity: currentUtilization.totalCapacity,
@@ -984,58 +943,45 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           assignedBackend: currentUtilization.assignedBackend
         });
 
-        // Priority-based capacity checking: Check if we have remaining capacity for required skills
-        let canAssign = true;
-        let assignmentDetails = '';
-        
-        // Check total capacity first
-        const newTotalUtil = (currentUtilization.assignedTotal + storyPoints) / currentUtilization.totalCapacity;
-        if (newTotalUtil > targetUtilization) {
-          console.log(`   ❌ Total capacity exceeded: ${newTotalUtil * 100}% > ${targetUtilization * 100}%`);
-          canAssign = false;
-        } else {
-          console.log(`   ✅ Total capacity OK: ${newTotalUtil * 100}% ≤ ${targetUtilization * 100}%`);
-        }
-        
-        // Check skill-specific capacity
-        if (canAssign) {
+        // Check if adding this item would exceed priority-based capacity in any skill
+        // For items requiring both skills, use a more balanced approach
+        const skillCapacityCheck = (() => {
           if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
-            // Full-stack work: Needs BOTH frontend AND backend capacity
-            const frontendRemaining = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
-            const backendRemaining = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
-            
-            if (frontendRemaining >= storyPoints && backendRemaining >= storyPoints) {
-              assignmentDetails = `full-stack work (needs ${storyPoints}pts from both FE & BE)`;
-              console.log(`   🔄 Full-stack item: FE remaining=${frontendRemaining.toFixed(1)}, BE remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
-          } else {
-              canAssign = false;
-              console.log(`   ❌ Full-stack item: FE remaining=${frontendRemaining.toFixed(1)}, BE remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints}`);
-            }
-          } else if (item.requiredSkills.includes('frontend')) {
-            // Frontend-only work
-            const frontendRemaining = currentUtilization.frontendCapacity - currentUtilization.assignedFrontend;
-            if (frontendRemaining >= storyPoints) {
-              assignmentDetails = `frontend work (needs ${storyPoints}pts FE)`;
-              console.log(`   🎨 Frontend item: remaining=${frontendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
-            } else {
-              canAssign = false;
-              console.log(`   ❌ Frontend item: remaining=${frontendRemaining.toFixed(1)}, needed=${storyPoints}`);
-            }
-          } else if (item.requiredSkills.includes('backend')) {
-            // Backend-only work
-            const backendRemaining = currentUtilization.backendCapacity - currentUtilization.assignedBackend;
-            if (backendRemaining >= storyPoints) {
-              assignmentDetails = `backend work (needs ${storyPoints}pts BE)`;
-              console.log(`   ⚙️ Backend item: remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints} ✅`);
-            } else {
-              canAssign = false;
-              console.log(`   ❌ Backend item: remaining=${backendRemaining.toFixed(1)}, needed=${storyPoints}`);
-            }
-          }
-        }
+            // For full-stack items, check if either skill can accommodate the work
+            // This allows better utilization when one skill has more capacity
+            const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
+            const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
 
-        if (canAssign) {
-          console.log(`   ✅ ASSIGNED "${item.title}" to ${sprint.name} as ${assignmentDetails}`);
+            console.log(`   🔄 Full-stack item check:`);
+            console.log(`   🎨 Frontend: ${currentUtilization.assignedFrontend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedFrontend + item.estimateStoryPoints} / ${currentUtilization.frontendCapacity} = ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            console.log(`   ⚙️ Backend: ${currentUtilization.assignedBackend} + ${item.estimateStoryPoints} = ${currentUtilization.assignedBackend + item.estimateStoryPoints} / ${currentUtilization.backendCapacity} = ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+
+            // Allow assignment if the average utilization is within target
+            const avgUtil = (newFrontendUtil + newBackendUtil) / 2;
+            console.log(`   📊 Average utilization: ${avgUtil * 100}% (target: ${targetUtilization * 100}%)`);
+            return avgUtil <= targetUtilization;
+          } else {
+            // For single-skill items, use the original strict checking
+            return item.requiredSkills.every(skill => {
+              if (skill === 'frontend') {
+                const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
+                console.log(`   🎨 Frontend-only check: ${newFrontendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+                return newFrontendUtil <= targetUtilization;
+              } else if (skill === 'backend') {
+                const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+                console.log(`   ⚙️ Backend-only check: ${newBackendUtil * 100}% (target: ${targetUtilization * 100}%)`);
+                return newBackendUtil <= targetUtilization;
+              }
+              return true;
+            });
+          }
+        })();
+
+        const newTotalUtil = (currentUtilization.assignedTotal + item.estimateStoryPoints) / currentUtilization.totalCapacity;
+        console.log(`   📈 Total utilization check: ${newTotalUtil * 100}% (target: ${targetUtilization * 100}%)`);
+
+        if (skillCapacityCheck && newTotalUtil <= targetUtilization) {
+          console.log(`   ✅ ASSIGNED to ${sprint.name}!`);
 
           // Assign item to this sprint
           const itemIndex = updatedWorkItems.findIndex(w => w.id === item.id);
@@ -1054,34 +1000,24 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               };
             }
 
-            // Update capacity tracking based on priority-based consumption
+            // Update utilization tracking
             const updatedUtil = { ...currentUtilization };
-            updatedUtil.assignedTotal += storyPoints;
+            updatedUtil.assignedTotal += item.estimateStoryPoints;
 
-            // Track skill-specific capacity consumption
-            if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
-              // Full-stack work consumes from both skills
-              updatedUtil.assignedFrontend += storyPoints;
-              updatedUtil.assignedBackend += storyPoints;
-              console.log(`   📊 Consumed ${storyPoints}pts from BOTH FE and BE capacity`);
-            } else if (item.requiredSkills.includes('frontend')) {
-              // Frontend work consumes from frontend capacity (can be done by FE-only or full-stack)
-              updatedUtil.assignedFrontend += storyPoints;
-              console.log(`   📊 Consumed ${storyPoints}pts from FE capacity`);
-            } else if (item.requiredSkills.includes('backend')) {
-              // Backend work consumes from backend capacity (can be done by BE-only or full-stack)
-              updatedUtil.assignedBackend += storyPoints;
-              console.log(`   📊 Consumed ${storyPoints}pts from BE capacity`);
-            }
-
-            console.log(`   📈 Updated capacity: Total=${updatedUtil.assignedTotal}/${updatedUtil.totalCapacity}, FE=${updatedUtil.assignedFrontend}/${updatedUtil.frontendCapacity}, BE=${updatedUtil.assignedBackend}/${updatedUtil.backendCapacity}`);
+            item.requiredSkills.forEach(skill => {
+              if (skill === 'frontend') {
+                updatedUtil.assignedFrontend += item.estimateStoryPoints;
+              } else if (skill === 'backend') {
+                updatedUtil.assignedBackend += item.estimateStoryPoints;
+              }
+            });
 
             sprintUtilizations.set(sprint.id, updatedUtil);
             assigned = true;
             lastAssignedSprintEndDate = sprint.endDate;
           }
         } else {
-          console.log(`   ❌ Cannot assign "${item.title}" - insufficient capacity`);
+          console.log(`   ❌ Failed capacity check: skills=${!skillCapacityCheck}, total=${newTotalUtil > targetUtilization}`);
         }
       }
 
@@ -1107,7 +1043,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           const skillRequired = item.requiredSkills[0]; // Primary skill for this item
           const skillCapacityAvailable = skillCapacities[skillRequired] || 0;
 
-          if (storyPoints <= skillCapacityAvailable) {
+          if (item.estimateStoryPoints <= skillCapacityAvailable) {
             // Assign the item to the new sprint
             newSprint.workItems.push(item.id);
 
@@ -1122,7 +1058,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
             console.log(`✅ Assigned "${item.title}" to newly created sprint "${newSprint.name}"`);
           } else {
-            console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${storyPoints})`);
+            console.log(`❌ Even new sprint doesn't have enough ${skillRequired} capacity (${skillCapacityAvailable}) for item "${item.title}" (${item.estimateStoryPoints})`);
           }
         } else {
           console.log(`❌ Failed to create new sprint for item "${item.title}"`);
@@ -1249,7 +1185,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     const workItemsToUpdate = [...data.workItems];
 
     // Get sprints to clear (from startSprintIndex to end)
-    const sprintsToClear = data.sprints.slice(startSprintIndex);
+    const sprintsToClear = upcomingSprints.slice(startSprintIndex);
     const sprintIdsToClear = new Set(sprintsToClear.map(s => s.id));
 
     // Remove assignments from work items for these sprints
@@ -1371,13 +1307,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (!workItem) {
         console.error(`Work item ${itemId} not found`);
         alert(`Work item not found. Please refresh the page and try again.`);
-        
-        // Clean up drag state on error
-        setDraggedItem(null);
-        setDragStart(null);
-        setHideDropZones(false);
-        dropHandledRef.current = false;
-        
         return;
       }
 
@@ -1385,13 +1314,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (workItem.assignedSprints.includes(sprintId)) {
         console.log(`Item ${itemId} already assigned to sprint ${sprintId}`);
         alert(`"${workItem.title}" is already assigned to this sprint.`);
-        
-        // Clean up drag state on error
-        setDraggedItem(null);
-        setDragStart(null);
-        setHideDropZones(false);
-        dropHandledRef.current = false;
-        
         return;
       }
 
@@ -1400,13 +1322,18 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       // Use enhanced skill detection
       const detectedSkills = detectSkillsFromContent(workItem);
+      console.log(`🔍 DEBUG: Work item "${workItem.title}" skill detection result:`, {
+        currentSkills: workItem.requiredSkills,
+        detectedSkills: detectedSkills,
+        detectedLength: detectedSkills.length
+      });
 
       // If we get a single skill back, apply it (regardless of current skills)
       if (detectedSkills.length === 1) {
         console.log(`🎯 Auto-detected skill: ${detectedSkills[0]} for "${workItem.title}"`);
         updatedWorkItem = {
           ...updatedWorkItem,
-          requiredSkills: detectedSkills as ('frontend' | 'backend')[]
+          requiredSkills: detectedSkills
         };
       } else if (detectedSkills.length === 0 || (detectedSkills.includes('frontend') && detectedSkills.includes('backend'))) {
         // No clear detection or both skills detected → Ask user only if item has multiple skills
@@ -1457,10 +1384,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         }
 
         // Check skill capacity using the updated work item skills
-        const canAssign = canWorkItemBeAssignedToSprint({
-          requiredSkills: updatedWorkItem.requiredSkills,
-          estimateStoryPoints: updatedWorkItem.estimateStoryPoints || 0
-        }, {
+        const canAssign = canWorkItemBeAssignedToSprint(updatedWorkItem, {
           frontend: sprintInfo.availableFrontendCapacity,
           backend: sprintInfo.availableBackendCapacity
         });
@@ -1490,7 +1414,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             console.log('✅ Work item skills updated in database');
           }
 
-          // Note: Already checked assignedSprints earlier, no need for additional check here
+          // Check if already assigned to this sprint
+          if (workItem.sprintId === sprintId) {
+            console.log(`ℹ️ Work item "${workItem.title}" is already assigned to sprint ${targetSprint.name}`);
+            alert(`ℹ️ "${workItem.title}" is already assigned to sprint "${targetSprint.name}"`);
+            return;
+          }
 
           console.log(`💾 Saving sprint assignment to database: ${itemId} → ${sprintId}`);
           await workItemsApi.assignToSprint(itemId, sprintId);
@@ -1507,13 +1436,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           }
 
           alert(`❌ ${errorMessage}`);
-          
-          // Clean up drag state on error
-          setDraggedItem(null);
-          setDragStart(null);
-          setHideDropZones(false);
-          dropHandledRef.current = false;
-          
           return;
         }
       } else {
@@ -1521,13 +1443,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         const message = `Cannot assign "${workItem.title}" to sprint. This item needs to be converted to a work item first.`;
         console.log(`❌ ${message}`);
         alert(`❌ ${message}\n\nPlease:\n1. Go to the Epics tab\n2. Click "Add to Work Items" for the parent epic\n3. Then assign the work items to sprints`);
-        
-        // Clean up drag state on error
-        setDraggedItem(null);
-        setDragStart(null);
-        setHideDropZones(false);
-        dropHandledRef.current = false;
-        
         return;
       }
 
@@ -1675,11 +1590,17 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
       console.log(`✅ Marking sprint as completed: ${sprintId} ("${sprint.name}")`);
 
-      // Mark sprint as completed
-      const updatedSprints = data.sprints.map(s =>
-        s.id === sprintId ? { ...s, status: 'completed' as const } : s
-      );
-      await onUpdateSprints(updatedSprints);
+      // Mark sprint as completed in database and remove from local state
+      const sprintToComplete = data.sprints.find(s => s.id === sprintId);
+      if (sprintToComplete) {
+        // First update the sprint status in the database
+        const completedSprint = { ...sprintToComplete, status: 'completed' as const };
+        await onUpdateSprints([completedSprint]);
+        
+        // Then remove it from local state since backend won't return completed sprints
+        const updatedSprints = data.sprints.filter(s => s.id !== sprintId);
+        onUpdateSprints(updatedSprints, false, false, true); // Skip backend sync since we already updated
+      }
 
       console.log(`✅ Sprint "${sprint.name}" marked as completed`);
     } catch (error) {
@@ -1807,14 +1728,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
             Sprint Planning
           </h2>
           <div className="flex gap-2">
-            {draggedItem && (
-              <button
-                onClick={clearDragState}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-              >
-                🚫 Exit Drag Mode
-              </button>
-            )}
             {(() => {
               console.log('🎨 UI RENDER CHECK:', {
                 autoAssignPreview: autoAssignPreview,
@@ -1827,7 +1740,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               <>
                 <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4" />
-                  {autoAssignPreview?.possibleEndDate ? (
+                  {autoAssignPreview.possibleEndDate ? (
                     `Preview Mode - End Date: ${format(autoAssignPreview.possibleEndDate, 'MMM dd, yyyy')}`
                   ) : (
                     'Preview Mode - Clear All Assignments'
@@ -1904,7 +1817,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           <div className="bg-green-50 p-3 rounded-lg">
             <div className="font-medium">Total Unassigned Points</div>
             <div className="text-xl font-bold text-green-600">
-              {unassignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}
+              {unassignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}
             </div>
           </div>
           <div className="bg-purple-50 p-3 rounded-lg">
@@ -2221,18 +2134,16 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         key={item.id}
                         data-item-id={item.id}
                         onPointerDown={(e) => {
-                          // Only start drag on left mouse button
+                          // Only start potential drag on left mouse button
                           if (e.button !== 0) return;
 
-                          console.log(`🔽 POINTER DOWN: Starting immediate drag for "${item.title}"`);
-                          // Start drag immediately - simple and clean
-                          setDraggedItem(item.id);
+                          console.log(`🔽 POINTER DOWN: Starting potential drag for "${item.title}"`);
                           setDragStart({
                             x: e.clientX,
                             y: e.clientY,
                             itemId: item.id
                           });
-                          setHideDropZones(false);
+                          // Don't prevent default to allow scrolling
                         }}
                         onClick={(e) => {
                           console.log(`🖱️ CLICKED on item: "${item.title}"`);
@@ -2265,7 +2176,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   const sprintNameElement = sprintElement.querySelector('h4');
                                   if (sprintNameElement) {
                                     const sprintName = sprintNameElement.textContent;
-                                    const matchingSprint = data.sprints.find(s => s.name === sprintName);
+                                    const matchingSprint = upcomingSprints.find(s => s.name === sprintName);
                                     if (matchingSprint) {
                                       sprintId = matchingSprint.id;
                                       break;
@@ -2278,18 +2189,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               if (sprintId) {
                                 addDebugEvent(`🎯 SUCCESS! Assigned "${item.title}" to sprint`);
 
+                                // Stop event propagation to prevent sprint handler from also firing
+                                e.stopPropagation();
+                                e.preventDefault();
+
                                 // Mark drop as handled
                                 dropHandledRef.current = true;
 
-                                const itemToAssign = draggedItem;
-                                
-                                // Clear drag state immediately
-                                setDraggedItem(null);
-                                setDragStart(null);
-                                setHideDropZones(false);
-
-                                // Assign to sprint
-                                assignItemToSprint(itemToAssign, sprintId);
+                                // Assign to sprint (global handler will clean up drag state)
+                                assignItemToSprint(draggedItem, sprintId);
                                 return; // Successfully handled
                               }
                             }
@@ -2412,10 +2320,10 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                     className="p-3 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
                     onClick={() => {
                       console.log(`🖱️ EPIC HEADER CLICKED: ${epic.id}`);
-                      toggleEpicExpansionUnassigned(epic.id);
+                      toggleEpicExpansion(epic.id);
                     }}
                   >
-                    {expandedEpicsUnassigned.has(epic.id) ? (
+                    {expandedEpics.has(epic.id) ? (
                       <ChevronDown className="h-4 w-4 text-indigo-600" />
                     ) : (
                       <ChevronRight className="h-4 w-4 text-indigo-600" />
@@ -2464,7 +2372,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                   </div>
 
                   {/* Epic Children (when expanded) */}
-                  {expandedEpicsUnassigned.has(epic.id) && epic.children && (
+                  {expandedEpics.has(epic.id) && epic.children && (
                     <div style={{
                       maxHeight: '300px',
                       width: '100%',
@@ -2500,18 +2408,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                             key={child.id}
                             data-item-id={child.id}
                             onPointerDown={isDraggable ? (e) => {
-                              // Only start drag on left mouse button
+                              // Only start potential drag on left mouse button
                               if (e.button !== 0) return;
 
-                              console.log(`🔽 POINTER DOWN: Starting immediate drag for epic child "${child.title}"`);
-                              // Start drag immediately - simple and clean
-                              setDraggedItem(child.id);
                               setDragStart({
                                 x: e.clientX,
                                 y: e.clientY,
                                 itemId: child.id
                               });
-                              setHideDropZones(false);
+                              // Don't prevent default to allow scrolling
                             } : undefined}
                             onPointerUp={isDraggable ? (e) => {
                               // Always clear drag start on pointer up
@@ -2533,16 +2438,12 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
                                 if (sprintId) {
                                   console.log(`🎯 SUCCESS! Epic child "${child.title}" assigned to sprint`);
+                                  e.stopPropagation();
+                                  e.preventDefault();
 
                                   // Mark that this drop was handled by a specific handler
                                   dropHandledRef.current = true;
 
-                                  // Clear drag state immediately
-                                  setDraggedItem(null);
-                                  setDragStart(null);
-                                  setHideDropZones(false);
-
-                                  // Assign to sprint
                                   assignItemToSprint(child.id, sprintId);
                                   return;
                                 }
@@ -2592,7 +2493,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               color: '#6b7280'
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span>{child.estimateStoryPoints ?? 'not set'} pts</span>
+                                <span>{child.estimateStoryPoints} pts</span>
                                 <div style={{ display: 'flex', gap: '4px' }}>
                                   {detectedSkills.map(skill => (
                                     <span
@@ -2726,21 +2627,15 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           setDragStart(null);
 
                           if (draggedItem) {
-                            console.log(`🎯 SPRINT CONTAINER POINTER UP: Dropped "${draggedItem}" in "${sprint.name}"`);
                             addDebugEvent(`🎯 SUCCESS! Dropped item in "${sprint.name}"`);
+                            e.stopPropagation(); // Prevent global pointerup from running too early
 
                             // Mark that this drop was handled by a specific handler
                             dropHandledRef.current = true;
-                            console.log(`🏁 Set dropHandledRef to true for sprint container drop`);
 
                             const itemToAssign = draggedItem;
 
-                            // Clear drag state immediately after capturing draggedItem
-                            setDraggedItem(null);
-                            setDragStart(null);
-                            setHideDropZones(false);
-
-                            // Assign to sprint
+                            // Assign to sprint (global handler will clean up visual state)
                             assignItemToSprint(itemToAssign, sprint.id);
                           }
                         }}
@@ -2796,12 +2691,6 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               </div>
                               <p className="text-sm text-gray-600">
                                 {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
-                              </p>
-                              <p className="text-xs text-gray-500">
-                                {(() => {
-                                  const developmentDays = calculateAvailableDevelopmentDays(sprint, data.teamMembers, data.publicHolidays);
-                                  return `${developmentDays.toFixed(1)} development days`;
-                                })()}
                               </p>
                             </div>
                           </div>
@@ -2887,123 +2776,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   Drop work items here or click Auto-Assign
                                 </div>
                               ) : (
-                                <div className="space-y-2">
-                                  {(() => {
-                                    // Group items by their epic, even if epic is not in sprint
-                                    const epicGroups: Record<string, WorkItem[]> = {};
-                                    const standalone: WorkItem[] = [];
-                                    
-                                    assignedItems.forEach(item => {
-                                      if (item.epicId) {
-                                        if (!epicGroups[item.epicId]) {
-                                          epicGroups[item.epicId] = [];
-                                        }
-                                        epicGroups[item.epicId].push(item);
-                                      } else {
-                                        standalone.push(item);
-                                      }
-                                    });
-
-                                    return (
-                                      <div className="space-y-2">
-                                        {/* Epic groups */}
-                                        {Object.entries(epicGroups).map(([epicId, items]) => {
-                                          const epic = data.workItems.find(wi => wi.id === epicId && wi.isEpic);
-                                          const epicTitle = epic ? epic.title : `Epic ${epicId}`;
-                                          const epicJiraId = epic ? epic.jiraId : null;
-                                          const isExpanded = expandedEpicsSprint.has(epicId);
-                                          
-                                          return (
-                                            <div key={epicId} className="border rounded-lg bg-indigo-50 border-indigo-200">
-                                              <div
-                                                className="p-2 cursor-pointer flex items-center gap-2 hover:bg-indigo-100 transition-colors"
-                                                onClick={() => toggleEpicExpansionSprint(epicId)}
-                                              >
-                                                {isExpanded ? (
-                                                  <ChevronDown className="h-4 w-4 text-indigo-600" />
-                                                ) : (
-                                                  <ChevronRight className="h-4 w-4 text-indigo-600" />
-                                                )}
-                                                <div className="flex-1">
-                                                  <div className="font-medium text-sm text-indigo-800 flex items-center gap-2">
-                                                    {epicJiraId ? (
-                                                      <span>
-                                                        <a
-                                                          href={`https://cvs-hcd.atlassian.net/browse/${epicJiraId}`}
-                                                          target="_blank"
-                                                          rel="noopener noreferrer"
-                                                          className="text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-1"
-                                                          onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                          {epicJiraId}
-                                                          <ExternalLink className="h-3 w-3" />
-                                                        </a>
-                                                        <span className="ml-1">- {epicTitle}</span>
-                                                      </span>
-                                                    ) : (
-                                                      <span>{epicTitle}</span>
-                                                    )}
-                                                    <span className="text-xs text-indigo-600">
-                                                      {items.length} {items.length === 1 ? 'item' : 'items'}
-                                                    </span>
-                                                  </div>
-                                                </div>
-                                              </div>
-                                              
-                                              {/* Epic children */}
-                                              {isExpanded && (
-                                                <div className="border-t border-indigo-200 p-2 space-y-1">
-                                                  {items.map(child => (
-                                                    <div key={child.id} className="flex justify-between items-center p-2 bg-white border-l-2 border-indigo-200 ml-4 rounded text-sm">
-                                                      <div className="flex items-center gap-2">
-                                                        <div>
-                                                          {child.jiraId ? (
-                                                            <span className="font-medium">
-                                                              <a
-                                                                href={`https://cvs-hcd.atlassian.net/browse/${child.jiraId}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                                                onClick={(e) => e.stopPropagation()}
-                                                              >
-                                                                {child.jiraId}
-                                                                <ExternalLink className="h-3 w-3" />
-                                                              </a>
-                                                              <span className="ml-1">- {child.title}</span>
-                                                            </span>
-                                                          ) : (
-                                                            <span className="font-medium">{child.title}</span>
-                                                          )}
-                                                          <span className="ml-2 text-gray-600">({child.estimateStoryPoints} pts)</span>
-                                                          <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${child.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                                                              child.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                                                'bg-gray-100 text-gray-800'
-                                                            }`}>
-                                                            {child.status === 'Completed' ? '✓ ' : ''}{child.jiraStatus || child.status}
-                                                          </span>
-                                                        </div>
-                                                      </div>
-                                                      <button
-                                                        onClick={(e) => {
-                                                          console.log(`🗑️ REMOVE CLICKED: ${child.id} from ${sprint.id}`);
-                                                          e.preventDefault();
-                                                          e.stopPropagation();
-                                                          removeItemFromSprint(child.id, sprint.id);
-                                                        }}
-                                                        className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                                                      >
-                                                        Remove
-                                                      </button>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                        
-                                        {/* Standalone items */}
-                                        {standalone.map(item => (
+                                assignedItems.map(item => (
                                   <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
                                     <div className="flex items-center gap-2">
                                       <div>
@@ -3025,6 +2798,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                           <span className="font-medium">{item.title}</span>
                                         )}
                                         <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                        {/* Always show current Jira status */}
                                         <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.status === 'Completed' ? 'bg-green-100 text-green-800' :
                                           item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
                                             'bg-gray-100 text-gray-800'
@@ -3032,6 +2806,19 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                           {item.status === 'Completed' ? '✓ ' : ''}{item.jiraStatus || item.status}
                                         </span>
                                       </div>
+                                      {/* Show priority for epic items or epic children */}
+                                      {(item.isEpic || item.epicId) && (
+                                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
+                                          item.isEpic
+                                            ? (item.priority || 'Medium')
+                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                        )}`}>
+                                          {item.isEpic
+                                            ? (item.priority || 'Medium')
+                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                          }
+                                        </span>
+                                      )}
                                     </div>
                                     <button
                                       onClick={(e) => {
@@ -3040,16 +2827,23 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                         e.stopPropagation();
                                         removeItemFromSprint(item.id, sprint.id);
                                       }}
+                                      onPointerDown={(e) => {
+                                        // Prevent any pointer events from triggering drag
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      onPointerUp={(e) => {
+                                        // Prevent any pointer events from triggering drag
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
                                       className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                      style={{ pointerEvents: 'auto', zIndex: 1000 }}
                                     >
                                       Remove
                                     </button>
                                   </div>
-                                        ))}
-                                      </div>
-                                    );
-                                  })()}
-                                </div>
+                                ))
                               )}
                             </div>
 

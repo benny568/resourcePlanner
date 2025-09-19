@@ -217,10 +217,11 @@ function App() {
             });
             
             if (existingSprint) {
-              // Check if sprint needs updating (compare key fields)
+              // Check if sprint needs updating (compare key fields including status)
               const needsUpdate = 
                 existingSprint.name !== sprint.name ||
                 existingSprint.plannedVelocity !== sprint.plannedVelocity ||
+                existingSprint.status !== sprint.status ||
                 new Date(existingSprint.startDate).getTime() !== sprint.startDate.getTime() ||
                 new Date(existingSprint.endDate).getTime() !== sprint.endDate.getTime();
               
@@ -229,6 +230,7 @@ function App() {
                   changes: {
                     name: existingSprint.name !== sprint.name ? `${existingSprint.name} → ${sprint.name}` : 'unchanged',
                     plannedVelocity: existingSprint.plannedVelocity !== sprint.plannedVelocity ? `${existingSprint.plannedVelocity} → ${sprint.plannedVelocity}` : 'unchanged',
+                    status: existingSprint.status !== sprint.status ? `${existingSprint.status} → ${sprint.status}` : 'unchanged',
                     startDate: new Date(existingSprint.startDate).getTime() !== sprint.startDate.getTime() ? `${existingSprint.startDate} → ${sprint.startDate}` : 'unchanged',
                     endDate: new Date(existingSprint.endDate).getTime() !== sprint.endDate.getTime() ? `${existingSprint.endDate} → ${sprint.endDate}` : 'unchanged'
                   }

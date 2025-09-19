@@ -1,34 +1,3 @@
 @tailwind base;
 @tailwind components;
-@tailwind utilities;
-
-/* Fix for overlapping text and layout issues - v2 */
-* {
-  box-sizing: border-box;
-}
-
-body {
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-/* Ensure proper text positioning */
-.text-overflow-fix {
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  white-space: normal;
-}
-
-/* Fix for grid layout issues */
-.grid {
-  display: grid !important;
-}
-
-/* Ensure proper spacing */
-.space-y-2 > * + * {
-  margin-top: 0.5rem !important;
-}
-
-.space-y-4 > * + * {
-  margin-top: 1rem !important;
-} 
+@tailwind utilities; 
