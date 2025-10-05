@@ -2,10 +2,11 @@ import React, { useState, useMemo } from 'react';
 import { WorkItem, Sprint, ResourcePlanningData } from '../types';
 import { Calculator, Target, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, ChevronDown, ChevronRight, Archive, Save, X, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { format, isBefore, isAfter } from 'date-fns';
-import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter } from '../utils/dateUtils';
+import { calculateSprintCapacity, calculateSprintSkillCapacities, canWorkItemBeAssignedToSprint, canWorkItemStartInSprint, getBlockedWorkItems, groupSprintsByQuarter, calculateAvailableDevelopmentDays } from '../utils/dateUtils';
 import { workItemsApi, transformers, sprintsApi } from '../services/api';
 import { detectSkillsFromContent } from '../utils/skillDetection';
 import { generateVelocityAwareSprintPlan, analyzeVelocityTrends, analyzeTeamCapacity } from '../utils/velocityPrediction';
+import { groupWorkItemsByEpic, getEpicColor, getEpicTitle } from '../utils/epicColors';
 
 interface SprintPlanningProps {
   data: ResourcePlanningData;
@@ -23,6 +24,7 @@ const getSprintName = (assignedSprints: string[], allSprints: Sprint[]): string 
 
   return sprint ? sprint.name : 'ASSIGNED';
 };
+
 
 export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   data,
@@ -55,6 +57,11 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
   // Velocity insights state
   const [showVelocityInsights, setShowVelocityInsights] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<{ticketId: string; sprintId: string; sprintName: string} | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   // Helper function to create new sprints based on sprint configuration
   const createNewSprints = (fromExistingSprints: Sprint[], sprintConfig: any, count: number = 1): Sprint[] => {
@@ -280,6 +287,80 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
     console.log(`📅 EXPANDED SPRINTS:`, Array.from(newExpanded));
   };
 
+  // Search for ticket/item functionality
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      console.log(`🔍 Searching for ticket: ${searchQuery}`);
+      
+      // Search through all work items to find the ticket
+      const allWorkItems = [...currentWorkItems];
+      
+      // Add epic children to search scope
+      currentWorkItems.filter(item => item.isEpic && item.children).forEach(epic => {
+        allWorkItems.push(...epic.children!);
+      });
+      
+      // Find work item by Jira ID or partial title match
+      const foundItem = allWorkItems.find(item => 
+        (item.jiraId && item.jiraId.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.id === searchQuery
+      );
+      
+      if (foundItem && foundItem.assignedSprints.length > 0) {
+        const sprintId = foundItem.assignedSprints[0]; // Get first assigned sprint
+        const sprint = currentSprints.find(s => s.id === sprintId);
+        
+        if (sprint) {
+          setSearchResults({
+            ticketId: foundItem.jiraId || foundItem.id,
+            sprintId: sprintId,
+            sprintName: sprint.name
+          });
+          
+          // Auto-expand the sprint containing the found item
+          setExpandedSprints(prev => new Set(prev).add(sprintId));
+          
+          console.log(`✅ Found ${foundItem.jiraId || foundItem.title} in sprint ${sprint.name}`);
+          
+          // Scroll to the sprint (if possible)
+          setTimeout(() => {
+            const sprintElement = document.querySelector(`[data-sprint-id="${sprintId}"]`);
+            if (sprintElement) {
+              sprintElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          }, 100);
+        } else {
+          setSearchResults(null);
+          alert(`Found item "${foundItem.title}" but it's not assigned to any visible sprint.`);
+        }
+      } else if (foundItem) {
+        setSearchResults(null);
+        alert(`Found item "${foundItem.title}" but it's not assigned to any sprint yet.`);
+      } else {
+        setSearchResults(null);
+        alert(`No item found matching "${searchQuery}". Try searching by Jira ID (e.g., REF-1234) or title.`);
+      }
+    } catch (error) {
+      console.error('❌ Search error:', error);
+      alert('Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Clear search
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResults(null);
+  };
+
   // Use preview data if available, otherwise use actual data
   // CRITICAL: Once preview is active, NEVER switch back to data.* until preview is cleared
   const currentWorkItems = autoAssignPreview?.isPreviewActive ? autoAssignPreview.workItems : data.workItems;
@@ -385,7 +466,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
   // Get active sprints (not completed by user)
   const activeSprints = currentSprints.filter(sprint =>
     sprint.status !== 'completed'
-  ).slice(0, 12); // Show next 12 sprints to better showcase quarterly grouping
+  ).slice(0, 50); // Show more sprints to accommodate auto-assign results extending into 2026+
 
   // Group sprints by quarter
   const quarterGroups = useMemo(() => {
@@ -2103,10 +2184,56 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       {/* Header with actions */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Target className="h-5 w-5" />
-            Sprint Planning
-          </h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Sprint Planning
+            </h2>
+            
+            {/* Search Box */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search ticket (e.g., REF-1234)"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  className="w-64 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                {searchResults && (
+                  <div className="absolute top-full left-0 mt-1 w-full bg-green-50 border border-green-200 rounded-md p-2 text-xs text-green-800 z-10">
+                    Found in: {searchResults.sprintName}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleSearch}
+                disabled={isSearching || !searchQuery.trim()}
+                className={`px-3 py-2 rounded-md text-sm flex items-center gap-1 ${
+                  isSearching || !searchQuery.trim()
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                {isSearching ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                ) : (
+                  '🔍'
+                )}
+                Search
+              </button>
+              {searchQuery && (
+                <button
+                  onClick={clearSearch}
+                  className="px-2 py-2 text-gray-500 hover:text-gray-700 text-sm"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
           <div className="flex gap-2">
             {(() => {
               console.log('🎨 UI RENDER CHECK:', {
@@ -3022,7 +3149,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         className={`bg-white rounded-lg shadow p-6 transition-all duration-200 ${(draggedItem && !hideDropZones)
                           ? 'border-2 border-blue-300 bg-blue-50/30 shadow-md cursor-copy ring-1 ring-blue-200'
                           : 'border border-gray-200 hover:border-gray-300 hover:shadow-md'
-                          }`}
+                        }`}
                         style={{
                           minHeight: (draggedItem && !hideDropZones) ? '200px' : 'auto',
                           position: 'relative',
@@ -3070,7 +3197,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                 )}
                               </div>
                               <p className="text-sm text-gray-600">
-                                {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')}
+                                {format(sprint.startDate, 'MMM dd')} - {format(sprint.endDate, 'MMM dd, yyyy')} ({calculateAvailableDevelopmentDays(sprint, data.teamMembers, data.publicHolidays)} dev days)
                               </p>
                             </div>
                           </div>
@@ -3156,79 +3283,146 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                   Drop work items here or click Auto-Assign
                                 </div>
                               ) : (
-                                assignedItems.map(item => (
-                                  <div key={item.id} className="flex justify-between items-center p-2 bg-blue-50 rounded text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <div>
-                                        {item.jiraId ? (
-                                          <span className="font-medium">
-                                            <a
-                                              href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              {item.jiraId}
-                                              <ExternalLink className="h-3 w-3" />
-                                            </a>
-                                            <span className="ml-1">- {item.title}</span>
-                                          </span>
-                                        ) : (
-                                          <span className="font-medium">{item.title}</span>
-                                        )}
-                                        <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
-                                        {/* Always show current Jira status */}
-                                        <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-                                          (item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? 'bg-green-100 text-green-800' :
-                                          (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? 'bg-purple-100 text-purple-800' :
-                                          (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? 'bg-red-100 text-red-800' :
-                                          item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                                            'bg-gray-100 text-gray-800'
-                                          }`}>
-                                          {(item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? '✅ ' : 
-                                           (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? '🚀 ' :
-                                           (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? '❌ ' : ''}{item.jiraStatus || item.status}
-                                        </span>
+                                (() => {
+                                  try {
+                                    // Group assigned items by epic
+                                    const groupedItems = groupWorkItemsByEpic(assignedItems);
+                                    const epicKeys = Object.keys(groupedItems);
+                                    
+                                    console.log(`🎨 Rendering ${sprint.name} with ${epicKeys.length} epic groups:`, epicKeys);
+                                    
+                                    if (epicKeys.length === 0) {
+                                      return (
+                                        <div className="p-2 bg-yellow-50 text-yellow-800 text-sm rounded">
+                                          No items to display in this sprint.
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    return epicKeys.map(epicKey => {
+                                      try {
+                                        const items = groupedItems[epicKey];
+                                        if (!items || !Array.isArray(items)) {
+                                          console.error(`❌ Invalid items for epic ${epicKey}:`, items);
+                                          return null;
+                                        }
+                                        
+                                        const isNoEpic = epicKey === '__no_epic__';
+                                        const epicTitle = isNoEpic ? 'Ungrouped Items' : getEpicTitle(epicKey, data.workItems);
+                                        const epicColor = isNoEpic ? 'bg-gray-100' : getEpicColor(epicKey);
+                                    
+                                    return (
+                                      <div key={epicKey} className="mb-3">
+                                        {/* Epic header */}
+                                        <div className={`px-2 py-1 text-xs font-medium text-gray-700 border-l-4 ${isNoEpic ? 'border-l-gray-500' : 'border-l-blue-500'} bg-gray-50 mb-1`}>
+                                          📁 {epicTitle} ({items.length} item{items.length !== 1 ? 's' : ''})
+                                        </div>
+                                        
+                                        {/* Epic items */}
+                                        <div className="space-y-1">
+                                          {items.map(item => {
+                                            const isHighlighted = searchResults && 
+                                              (item.jiraId === searchResults.ticketId || item.id === searchResults.ticketId);
+                                            
+                                            return (
+                                            <div key={item.id} className={`flex justify-between items-center p-2 rounded text-sm ml-2 ${
+                                              isHighlighted 
+                                                ? 'bg-yellow-100 border-2 border-yellow-400 animate-pulse' 
+                                                : 'bg-blue-50'
+                                            }`}>
+                                              <div className="flex items-center gap-2">
+                                                <div>
+                                                  {item.jiraId ? (
+                                                    <span className="font-medium">
+                                                      <a
+                                                        href={`https://cvs-hcd.atlassian.net/browse/${item.jiraId}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                      >
+                                                        {item.jiraId}
+                                                        <ExternalLink className="h-3 w-3" />
+                                                      </a>
+                                                      <span className="ml-1">- {item.title}</span>
+                                                    </span>
+                                                  ) : (
+                                                    <span className="font-medium">{item.title}</span>
+                                                  )}
+                                                  <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                                  {/* Always show current Jira status */}
+                                                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                                                    (item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? 'bg-green-100 text-green-800' :
+                                                    (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? 'bg-purple-100 text-purple-800' :
+                                                    (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? 'bg-red-100 text-red-800' :
+                                                    item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                                                      'bg-gray-100 text-gray-800'
+                                                    }`}>
+                                                    {(item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? '✅ ' : 
+                                                     (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? '🚀 ' :
+                                                     (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? '❌ ' : ''}{item.jiraStatus || item.status}
+                                                  </span>
+                                                </div>
+                                                {/* Show priority for epic items or epic children */}
+                                                {(item.isEpic || item.epicId) && (
+                                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
+                                                    item.isEpic
+                                                      ? (item.priority || 'Medium')
+                                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                                  )}`}>
+                                                    {item.isEpic
+                                                      ? (item.priority || 'Medium')
+                                                      : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
+                                                    }
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <button
+                                                onClick={(e) => {
+                                                  console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  removeItemFromSprint(item.id, sprint.id);
+                                                }}
+                                                onPointerDown={(e) => {
+                                                  // Prevent any pointer events from triggering drag
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                                onPointerUp={(e) => {
+                                                  // Prevent any pointer events from triggering drag
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                                className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
+                                                style={{ pointerEvents: 'auto', zIndex: 1000 }}
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
+                                            );
+                                          })}
+                                        </div>
                                       </div>
-                                      {/* Show priority for epic items or epic children */}
-                                      {(item.isEpic || item.epicId) && (
-                                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getPriorityStyles(
-                                          item.isEpic
-                                            ? (item.priority || 'Medium')
-                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                        )}`}>
-                                          {item.isEpic
-                                            ? (item.priority || 'Medium')
-                                            : (data.workItems.find(wi => wi.id === item.epicId && wi.isEpic)?.priority || 'Medium')
-                                          }
-                                        </span>
-                                      )}
-                                    </div>
-                                    <button
-                                      onClick={(e) => {
-                                        console.log(`🗑️ REMOVE CLICKED: ${item.id} from ${sprint.id}`);
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        removeItemFromSprint(item.id, sprint.id);
-                                      }}
-                                      onPointerDown={(e) => {
-                                        // Prevent any pointer events from triggering drag
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                      }}
-                                      onPointerUp={(e) => {
-                                        // Prevent any pointer events from triggering drag
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                      }}
-                                      className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-xs"
-                                      style={{ pointerEvents: 'auto', zIndex: 1000 }}
-                                    >
-                                      Remove
-                                    </button>
-                                  </div>
-                                ))
+                                    );
+                                      } catch (itemError) {
+                                        console.error(`❌ Error rendering epic ${epicKey}:`, itemError);
+                                        return (
+                                          <div key={epicKey} className="p-2 bg-red-50 text-red-800 text-sm rounded">
+                                            Error rendering epic: {epicKey}
+                                          </div>
+                                        );
+                                      }
+                                    });
+                                  } catch (error) {
+                                    console.error(`❌ Error in epic grouping for sprint ${sprint.name}:`, error);
+                                    return (
+                                      <div className="p-2 bg-red-50 text-red-800 text-sm rounded">
+                                        Error loading sprint items. Check console for details.
+                                      </div>
+                                    );
+                                  }
+                                })()
                               )}
                             </div>
 

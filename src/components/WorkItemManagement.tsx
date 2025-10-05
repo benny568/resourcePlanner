@@ -176,6 +176,43 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
     }
   };
 
+  const refreshTicketStatus = async (workItem: WorkItem) => {
+    if (!workItem.jiraId) {
+      console.error('Cannot refresh: missing Jira ID');
+      return;
+    }
+
+    const ticketKey = workItem.jiraId;
+    console.log(`🔄 Refreshing ticket status for ${ticketKey}...`);
+    
+    try {
+      const response = await fetch('/api/jira/ticket-refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketKey })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to refresh ticket: ${response.status} ${response.statusText}`);
+      }
+
+      const refreshedItem = await response.json();
+      console.log(`📝 Refreshed ticket data for ${ticketKey}:`, refreshedItem);
+
+      // Update the work item in the list
+      onUpdateWorkItems(
+        workItems.map(item => 
+          item.id === workItem.id ? { ...item, status: refreshedItem.status, jiraStatus: refreshedItem.jiraStatus } : item
+        )
+      );
+
+      console.log(`✅ Updated ${ticketKey} status: ${refreshedItem.status} (Jira: ${refreshedItem.jiraStatus})`);
+    } catch (error) {
+      console.error(`❌ Error refreshing ticket ${ticketKey}:`, error);
+      alert(`Failed to refresh ticket ${ticketKey}. Please try again.`);
+    }
+  };
+
   const refreshEpicChildren = async (epicWorkItem: WorkItem) => {
     if (!epicWorkItem.isEpic || !epicWorkItem.jiraId) {
       console.error('Cannot refresh: not an epic or missing Jira ID');
@@ -228,6 +265,44 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
       console.log(`➕ Found ${newChildren.length} new children to add`);
       console.log(`🔗 Found ${unlinkedChildren.length} existing children to link to this epic`);
 
+      // Find existing children that need status updates
+      const childrenWithStatusUpdates = existingChildren.filter(existingChild => {
+        const freshChild = freshEpicData.children.find((jiraChild: any) => jiraChild.jiraId === existingChild.jiraId);
+        return freshChild && (
+          existingChild.status !== freshChild.status || 
+          existingChild.jiraStatus !== freshChild.jiraStatus
+        );
+      });
+
+      console.log(`🔄 Found ${childrenWithStatusUpdates.length} existing children with status updates needed`);
+
+      // Update status for existing children
+      const updatedStatusChildren: WorkItem[] = [];
+      for (const existingChild of childrenWithStatusUpdates) {
+        const freshChild = freshEpicData.children.find((jiraChild: any) => jiraChild.jiraId === existingChild.jiraId);
+        if (freshChild) {
+          try {
+            console.log(`🔄 Updating status for ${existingChild.jiraId}: ${existingChild.status}/${existingChild.jiraStatus} → ${freshChild.status}/${freshChild.jiraStatus}`);
+            
+            const updatedChild = { 
+              ...existingChild, 
+              status: freshChild.status,
+              jiraStatus: freshChild.jiraStatus 
+            };
+            
+            await workItemsApi.update(existingChild.id, { 
+              status: freshChild.status,
+              jiraStatus: freshChild.jiraStatus 
+            });
+            
+            updatedStatusChildren.push(updatedChild);
+            console.log(`✅ Updated status for ${existingChild.jiraId}`);
+          } catch (error) {
+            console.error(`❌ Failed to update status for ${existingChild.jiraId}:`, error);
+          }
+        }
+      }
+
       // Save new children to database
       const savedNewChildren: WorkItem[] = [];
       for (const child of newChildren) {
@@ -276,8 +351,8 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
         }
       }
 
-      // Update work items with new children and updated links
-      if (savedNewChildren.length > 0 || updatedExistingChildren.length > 0) {
+      // Update work items with new children, updated links, and status updates
+      if (savedNewChildren.length > 0 || updatedExistingChildren.length > 0 || updatedStatusChildren.length > 0) {
         // Start with current work items
         let updatedWorkItems = [...workItems];
         
@@ -286,6 +361,14 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
         
         // Update existing children that were re-linked
         updatedExistingChildren.forEach(updatedChild => {
+          const index = updatedWorkItems.findIndex(item => item.id === updatedChild.id);
+          if (index !== -1) {
+            updatedWorkItems[index] = updatedChild;
+          }
+        });
+        
+        // Update existing children with status changes
+        updatedStatusChildren.forEach(updatedChild => {
           const index = updatedWorkItems.findIndex(item => item.id === updatedChild.id);
           if (index !== -1) {
             updatedWorkItems[index] = updatedChild;
@@ -319,15 +402,17 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
         
         onUpdateWorkItems(finalWorkItems);
         
-        const totalUpdated = savedNewChildren.length + updatedExistingChildren.length;
-        console.log(`✅ Epic refreshed: Added ${savedNewChildren.length} new children, linked ${updatedExistingChildren.length} existing children`);
+        const totalUpdated = savedNewChildren.length + updatedExistingChildren.length + updatedStatusChildren.length;
+        console.log(`✅ Epic refreshed: Added ${savedNewChildren.length} new children, linked ${updatedExistingChildren.length} existing children, updated status for ${updatedStatusChildren.length} children`);
         
         const newChildrenText = savedNewChildren.length > 0 ? 
           `\n\nNew children added:\n${savedNewChildren.map(child => `• ${child.title}`).join('\n')}` : '';
         const linkedChildrenText = updatedExistingChildren.length > 0 ? 
           `\n\nExisting children linked:\n${updatedExistingChildren.map(child => `• ${child.title}`).join('\n')}` : '';
+        const statusUpdatedText = updatedStatusChildren.length > 0 ? 
+          `\n\nStatus updated:\n${updatedStatusChildren.map(child => `• ${child.jiraId}: ${child.jiraStatus || child.status}`).join('\n')}` : '';
         
-        alert(`✅ Epic refreshed! Total: ${totalUpdated} ticket(s) updated${newChildrenText}${linkedChildrenText}`);
+        alert(`✅ Epic refreshed! Total: ${totalUpdated} ticket(s) updated${newChildrenText}${linkedChildrenText}${statusUpdatedText}`);
       } else {
         console.log('✅ Epic is up to date - no new or unlinked children found');
         alert('✅ Epic is up to date - all tickets are already properly linked');
@@ -561,6 +646,17 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
             </div>
           ) : (
             workItems.filter(item => !item.epicId).map((item) => {
+              // Debug log for REF-3075 specifically
+              if (item.jiraId === 'REF-3075') {
+                console.log('🔍 Displaying REF-3075 with status:', {
+                  id: item.id,
+                  jiraId: item.jiraId, 
+                  status: item.status,
+                  jiraStatus: item.jiraStatus,
+                  displayText: item.jiraStatus || item.status
+                });
+              }
+              
               // Handle epic work items with expandable children
               if (item.isEpic) {
                 console.log(`🔍 Rendering epic work item: ${item.id}`, { 
@@ -840,10 +936,20 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                       <option value="In Progress">In Progress</option>
                       <option value="Completed">Completed</option>
                     </select>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusColor(item.status)}`}>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusColor(item.status)}`}
+                          title={`Internal status: ${item.status}, Jira status: ${item.jiraStatus || 'none'}`}>
                       {getStatusIcon(item.status)}
                       {item.jiraStatus || item.status}
                     </span>
+                    {item.jiraId && (
+                      <button
+                        onClick={() => refreshTicketStatus(item)}
+                        className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 rounded border"
+                        title={`Refresh status from Jira for ${item.jiraId}`}
+                      >
+                        🔄 Refresh
+                      </button>
+                    )}
                   </div>
                 </div>
               );
