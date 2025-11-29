@@ -451,7 +451,7 @@ export const EpicsManagement: React.FC<EpicsManagementProps> = ({
                             </div>
                             
                             <div className="flex items-center gap-3 text-xs text-gray-500">
-                              <span>{child.estimateStoryPoints} pts</span>
+                              <span>{child.estimateStoryPoints ?? 'not set'} pts</span>
                               <span className={`px-2 py-1 rounded-full ${getStatusColor(child.jiraStatus || child.status)}`}>
                                 {child.jiraStatus || child.status}
                               </span>

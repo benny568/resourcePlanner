@@ -18,7 +18,7 @@ export interface PersonalHoliday {
 
 export interface WorkItem {
   id: string;
-  jiraId?: string; // Optional Jira ticket ID (e.g., REF-1234)
+  jiraId?: string; // Optional Jira ticket ID (e.g., CW-1234)
   title: string;
   description: string;
   estimateStoryPoints: number | null;
@@ -37,7 +37,7 @@ export interface WorkItem {
 
 export interface Epic {
   id: string;
-  jiraId: string; // Jira epic key (e.g., REF-1234)
+  jiraId: string; // Jira epic key (e.g., CW-1234)
   title: string;
   description: string;
   status: 'Not Started' | 'In Progress' | 'Completed';

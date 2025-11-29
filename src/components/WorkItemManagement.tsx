@@ -607,7 +607,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                           <div className="flex-1">
                             <div className="font-medium">{item.title}</div>
                             <div className="text-xs text-gray-500">
-                              {item.estimateStoryPoints} pts • Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}
+                              {item.estimateStoryPoints ?? 'not set'} pts • Due: {format(item.requiredCompletionDate, 'MMM dd, yyyy')}
                             </div>
                           </div>
                         </label>
@@ -668,7 +668,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                 const isExpanded = expandedEpics.has(item.id);
                 const children = item.children || [];
                 const completedChildren = children.filter(child => child.status === 'Completed');
-                const completedPoints = completedChildren.reduce((sum, child) => sum + child.estimateStoryPoints, 0);
+                const completedPoints = completedChildren.reduce((sum, child) => sum + (child.estimateStoryPoints || 0), 0);
                 const progressPercentage = item.estimateStoryPoints > 0 
                   ? (completedPoints / item.estimateStoryPoints) * 100 
                   : 0;
@@ -814,7 +814,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
                                 </div>
                                 
                                 <div className="flex items-center gap-3 text-xs text-gray-500">
-                                  <span>{child.estimateStoryPoints} pts</span>
+                                  <span>{child.estimateStoryPoints ?? 'not set'} pts</span>
                                   <span>Due: {format(child.requiredCompletionDate, 'MMM dd')}</span>
                                   <span className={`px-2 py-1 rounded-full ${getStatusColor(child.jiraStatus || child.status)}`}>
                                     {child.jiraStatus || child.status}
@@ -969,7 +969,7 @@ export const WorkItemManagement: React.FC<WorkItemManagementProps> = ({
               <div>
                 <span className="font-medium">Total Story Points:</span>
                 <div className="text-lg font-bold text-blue-600">
-                  {workItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}
+                  {workItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}
                 </div>
               </div>
               <div>

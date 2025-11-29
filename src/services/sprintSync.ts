@@ -60,7 +60,7 @@ export interface PastSprintSyncResponse {
 export class SprintSyncService {
   private projectKey: string;
 
-  constructor(projectKey: string = 'REF') {
+  constructor(projectKey: string = 'CW') {
     this.projectKey = projectKey;
   }
 

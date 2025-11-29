@@ -109,10 +109,13 @@ export function getEpicColor(epicId: string): EpicColor {
 /**
  * Get color for a work item based on its epic relationship
  */
-export function getWorkItemColor(workItem: { epicId?: string; isEpic?: boolean; id?: string }): EpicColor {
-  // If this is an epic work item, use its own ID for color
-  if (workItem.isEpic && workItem.id) {
-    return getEpicColor(workItem.id);
+export function getWorkItemColor(workItem: { epicId?: string; isEpic?: boolean; id?: string; jiraId?: string }): EpicColor {
+  // If this is an epic work item, use its jiraId or ID for color
+  if (workItem.isEpic) {
+    const colorKey = workItem.jiraId || workItem.id;
+    if (colorKey) {
+      return getEpicColor(colorKey);
+    }
   }
   
   // If this work item belongs to an epic, use the epic's color
@@ -128,7 +131,14 @@ export function getWorkItemColor(workItem: { epicId?: string; isEpic?: boolean; 
  * Get the epic title for display purposes
  */
 export function getEpicTitle(epicId: string, workItems: any[]): string {
-  const epic = workItems.find(item => item.id === epicId && item.isEpic);
+  // First try to find by jiraId (most common case for epic children)
+  let epic = workItems.find(item => item.jiraId === epicId && item.isEpic);
+  
+  // Fallback to finding by internal ID
+  if (!epic) {
+    epic = workItems.find(item => item.id === epicId && item.isEpic);
+  }
+  
   if (epic) {
     return epic.jiraId ? `${epic.jiraId}: ${epic.title}` : epic.title;
   }

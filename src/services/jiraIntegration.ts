@@ -4,7 +4,7 @@ import { TeamMember, WorkItem, Skill } from '../types';
 export class JiraIntegrationService {
   private projectKey: string;
 
-  constructor(projectKey: string = 'REF') {
+  constructor(projectKey: string = 'CW') {
     this.projectKey = projectKey;
   }
 
@@ -85,11 +85,16 @@ export class JiraIntegrationService {
 
   // Transform Jira epic to WorkItem format
   static transformJiraEpicToWorkItem(jiraEpic: any): WorkItem {
-    // Map Jira status to our status
+    // Map Jira status to our status - updated for new workflow
     const statusMapping: Record<string, WorkItem['status']> = {
       'Draft': 'Not Started',
-      'Ready': 'Not Started', 
+      'Ready to Start': 'Not Started',
+      'Cancelled': 'Not Started',
       'In Progress': 'In Progress',
+      'Dev Complete': 'In Progress',
+      'Test Complete': 'In Progress', 
+      'Pending Approval': 'In Progress',
+      'Accepted': 'Completed',
       'Done': 'Completed',
       'Completed': 'Completed'
     };

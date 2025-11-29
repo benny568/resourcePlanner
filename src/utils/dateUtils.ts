@@ -74,7 +74,7 @@ export const calculateAvailableDevelopmentDays = (
 export const getQuarterInfo = (date: Date) => {
   const quarter = getQuarter(date);
   const year = getYear(date);
-  return { quarter, year, quarterString: `Q${quarter} ${year}` };
+  return { quarter, year, quarterString: `REF Q${quarter} ${year}` };
 };
 
 export const groupSprintsByQuarter = (sprints: Sprint[]) => {

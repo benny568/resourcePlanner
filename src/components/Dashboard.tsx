@@ -21,10 +21,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data }) => {
   const inProgressItems = data.workItems.filter(item => item.status === 'In Progress').length;
   const notStartedItems = data.workItems.filter(item => item.status === 'Not Started').length;
   
-  const totalStoryPoints = data.workItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+  const totalStoryPoints = data.workItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
   const completedStoryPoints = data.workItems
     .filter(item => item.status === 'Completed')
-    .reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+    .reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
   const remainingStoryPoints = totalStoryPoints - completedStoryPoints;
   
   const completionPercentage = totalStoryPoints > 0 ? (completedStoryPoints / totalStoryPoints) * 100 : 0;

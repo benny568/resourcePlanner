@@ -35,8 +35,8 @@ export const EpicRoadmap: React.FC<EpicRoadmapProps> = ({ workItems, sprints }) 
       
       // Calculate completed points
       const completedChildren = children.filter(child => child.status === 'Completed');
-      const completedPoints = completedChildren.reduce((sum, child) => sum + child.estimateStoryPoints, 0);
-      const totalPoints = children.reduce((sum, child) => sum + child.estimateStoryPoints, 0);
+      const completedPoints = completedChildren.reduce((sum, child) => sum + (child.estimateStoryPoints || 0), 0);
+      const totalPoints = children.reduce((sum, child) => sum + (child.estimateStoryPoints || 0), 0);
       const progressPercentage = totalPoints > 0 ? (completedPoints / totalPoints) * 100 : 0;
       
       // Get sprints that contain work from this epic
@@ -70,7 +70,7 @@ export const EpicRoadmap: React.FC<EpicRoadmapProps> = ({ workItems, sprints }) 
               const sprintEpicWork = children.filter(child => 
                 child.assignedSprints.includes(sprint.id)
               );
-              const sprintPoints = sprintEpicWork.reduce((sum, child) => sum + child.estimateStoryPoints, 0);
+              const sprintPoints = sprintEpicWork.reduce((sum, child) => sum + (child.estimateStoryPoints || 0), 0);
               runningTotal += sprintPoints;
               
               if (runningTotal >= totalPoints) {

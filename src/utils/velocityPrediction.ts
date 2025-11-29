@@ -122,11 +122,11 @@ export function analyzeTeamCapacity(
 
   const frontendWork = unassignedItems.filter(wi => 
     wi.requiredSkills.includes('frontend')
-  ).reduce((sum, wi) => sum + wi.estimateStoryPoints, 0);
+  ).reduce((sum, wi) => sum + (wi.estimateStoryPoints || 0), 0);
 
   const backendWork = unassignedItems.filter(wi => 
     wi.requiredSkills.includes('backend')
-  ).reduce((sum, wi) => sum + wi.estimateStoryPoints, 0);
+  ).reduce((sum, wi) => sum + (wi.estimateStoryPoints || 0), 0);
 
   // Recommend utilization based on velocity confidence
   const baseUtilization = 0.70; // Start with 70% base utilization

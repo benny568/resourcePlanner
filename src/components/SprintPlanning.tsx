@@ -345,7 +345,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
         alert(`Found item "${foundItem.title}" but it's not assigned to any sprint yet.`);
       } else {
         setSearchResults(null);
-        alert(`No item found matching "${searchQuery}". Try searching by Jira ID (e.g., REF-1234) or title.`);
+        alert(`No item found matching "${searchQuery}". Try searching by Jira ID (e.g., CW-1234) or title.`);
       }
     } catch (error) {
       console.error('❌ Search error:', error);
@@ -593,7 +593,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       if (combinedItems.length > allAssignedItems.length) {
         console.log(`🔍 REMOVED ${combinedItems.length - allAssignedItems.length} duplicate(s) in sprint "${sprint.name}"`);
       }
-      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+      const assignedPoints = allAssignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
 
       // Calculate skill-specific capacities
       const skillCapacities = calculateSprintSkillCapacities(sprint, data.teamMembers, data.publicHolidays);
@@ -602,8 +602,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
       // Calculate skill-specific assignments
       const frontendItems = allAssignedItems.filter(item => item.requiredSkills.includes('frontend'));
       const backendItems = allAssignedItems.filter(item => item.requiredSkills.includes('backend'));
-      const frontendPoints = frontendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
-      const backendPoints = backendItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0);
+      const frontendPoints = frontendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
+      const backendPoints = backendItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0);
 
       const utilization = capacity > 0 ? (assignedPoints / capacity) * 100 : 0;
       const frontendUtilization = skillCapacities.frontend > 0 ? (frontendPoints / skillCapacities.frontend) * 100 : 0;
@@ -658,23 +658,23 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
     sprintData.forEach(sprintInfo => {
       const assignedItems = sprintInfo.assignedItems;
-      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}`);
+      console.log(`🔍 Sprint ${sprintInfo.sprint.name}: ${assignedItems.length} items, total points: ${assignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}`);
 
       assignedItems.forEach(item => {
         // For overall utilization, count each item only once
-        totalOverallAssigned += item.estimateStoryPoints;
+        totalOverallAssigned += (item.estimateStoryPoints || 0);
 
         // For skill-specific utilization, allocate points based on required skills
         if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
           // Split points between frontend and backend for items requiring both
-          totalFrontendAssigned += item.estimateStoryPoints / 2;
-          totalBackendAssigned += item.estimateStoryPoints / 2;
+          totalFrontendAssigned += (item.estimateStoryPoints || 0) / 2;
+          totalBackendAssigned += (item.estimateStoryPoints || 0) / 2;
         } else if (item.requiredSkills.includes('frontend')) {
           // Frontend-only items
-          totalFrontendAssigned += item.estimateStoryPoints;
+          totalFrontendAssigned += (item.estimateStoryPoints || 0);
         } else if (item.requiredSkills.includes('backend')) {
           // Backend-only items
-          totalBackendAssigned += item.estimateStoryPoints;
+          totalBackendAssigned += (item.estimateStoryPoints || 0);
         }
       });
       totalCapacityAvailable += sprintInfo.capacity;
@@ -1119,8 +1119,8 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
 
         // ENHANCED: Smart capacity checking for maximum sprint utilization
         const skillCapacityCheck = (() => {
-          const newFrontendUtil = (currentUtilization.assignedFrontend + item.estimateStoryPoints) / currentUtilization.frontendCapacity;
-          const newBackendUtil = (currentUtilization.assignedBackend + item.estimateStoryPoints) / currentUtilization.backendCapacity;
+          const newFrontendUtil = (currentUtilization.assignedFrontend + (item.estimateStoryPoints || 0)) / currentUtilization.frontendCapacity;
+          const newBackendUtil = (currentUtilization.assignedBackend + (item.estimateStoryPoints || 0)) / currentUtilization.backendCapacity;
 
           if (item.requiredSkills.includes('frontend') && item.requiredSkills.includes('backend')) {
             // For full-stack items, check if either skill can accommodate the work
@@ -2195,7 +2195,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search ticket (e.g., REF-1234)"
+                  placeholder="Search ticket (e.g., CW-1234)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
@@ -2324,7 +2324,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
           <div className="bg-green-50 p-3 rounded-lg">
             <div className="font-medium">Total Unassigned Points</div>
             <div className="text-xl font-bold text-green-600">
-              {unassignedItems.reduce((sum, item) => sum + item.estimateStoryPoints, 0)}
+              {unassignedItems.reduce((sum, item) => sum + (item.estimateStoryPoints || 0), 0)}
             </div>
           </div>
           <div className="bg-purple-50 p-3 rounded-lg">
@@ -2736,7 +2736,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                         <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                         <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                           <div className="flex items-center gap-2">
-                            <span>{item.estimateStoryPoints} pts</span>
+                            <span>{item.estimateStoryPoints ?? 'not set'} pts</span>
                             <div className="flex gap-1">
                               {item.requiredSkills.map(skill => (
                                 <span
@@ -2789,7 +2789,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                           <div className="font-medium text-sm">{item.jiraId ? `${item.jiraId} - ${item.title}` : item.title}</div>
                           <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
                             <div className="flex items-center gap-2">
-                              <span>{item.estimateStoryPoints} pts</span>
+                              <span>{item.estimateStoryPoints ?? 'not set'} pts</span>
                               <div className="flex gap-1">
                                 {item.requiredSkills.map(skill => (
                                   <span
@@ -3000,7 +3000,7 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                               color: '#6b7280'
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span>{child.estimateStoryPoints} pts</span>
+                                <span>{child.estimateStoryPoints ?? 'not set'} pts</span>
                                 <div style={{ display: 'flex', gap: '4px' }}>
                                   {detectedSkills.map(skill => (
                                     <span
@@ -3349,18 +3349,20 @@ export const SprintPlanning: React.FC<SprintPlanningProps> = ({
                                                   ) : (
                                                     <span className="font-medium">{item.title}</span>
                                                   )}
-                                                  <span className="ml-2 text-gray-600">({item.estimateStoryPoints} pts)</span>
+                                                  <span className="ml-2 text-gray-600">({item.estimateStoryPoints ?? 'not set'} pts)</span>
                                                   {/* Always show current Jira status */}
                                                   <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-                                                    (item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? 'bg-green-100 text-green-800' :
+                                                    (item.status === 'Completed' || (item.jiraStatus && ['Accepted', 'Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? 'bg-green-100 text-green-800' :
                                                     (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? 'bg-purple-100 text-purple-800' :
                                                     (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? 'bg-red-100 text-red-800' :
+                                                    (item.jiraStatus && ['Dev Complete', 'Test Complete', 'Pending Approval'].includes(item.jiraStatus)) ? 'bg-blue-100 text-blue-800' :
                                                     item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
                                                       'bg-gray-100 text-gray-800'
                                                     }`}>
-                                                    {(item.status === 'Completed' || (item.jiraStatus && ['Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? '✅ ' : 
+                                                    {(item.status === 'Completed' || (item.jiraStatus && ['Accepted', 'Done', 'Resolved', 'Closed', 'Complete', 'Completed'].includes(item.jiraStatus))) ? '✅ ' : 
                                                      (item.jiraStatus && ['Deployed', 'Released', 'Live', 'Production'].includes(item.jiraStatus)) ? '🚀 ' :
-                                                     (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? '❌ ' : ''}{item.jiraStatus || item.status}
+                                                     (item.jiraStatus && ['Cancelled', 'Canceled', 'Won\'t Fix', 'Rejected'].includes(item.jiraStatus)) ? '❌ ' : 
+                                                     (item.jiraStatus && ['Dev Complete', 'Test Complete', 'Pending Approval'].includes(item.jiraStatus)) ? '🔄 ' : ''}{item.jiraStatus || item.status}
                                                   </span>
                                                 </div>
                                                 {/* Show priority for epic items or epic children */}

@@ -9,7 +9,7 @@ interface JiraImportProps {
 
 export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
   // Main import state
-  const [projectKey, setProjectKey] = useState('REF');
+  const [projectKey, setProjectKey] = useState('CW');
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -151,15 +151,45 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       setEpics(loadedEpics);
       setPagination(paginationData);
       
+      // Extract all children as work items to be saved to the database
+      const allChildWorkItems: WorkItem[] = [];
+      loadedEpics.forEach(epic => {
+        const childWorkItems = epic.children.map(child => ({
+          id: child.id,
+          jiraId: child.jiraId,
+          title: child.title,
+          description: child.description,
+          estimateStoryPoints: child.estimateStoryPoints,
+          requiredCompletionDate: new Date(child.requiredCompletionDate),
+          requiredSkills: child.requiredSkills.filter((skill: string): skill is 'frontend' | 'backend' => 
+            skill === 'frontend' || skill === 'backend'
+          ),
+          dependencies: child.dependencies,
+          status: child.status,
+          jiraStatus: child.jiraStatus,
+          assignedSprints: child.assignedSprints,
+          epicId: epic.jiraId // Link children to the epic
+        }));
+        allChildWorkItems.push(...childWorkItems);
+      });
+      
+      console.log(`📝 Extracted ${allChildWorkItems.length} total children as work items from ${loadedEpics.length} epics`);
+      
       setEpicImportResults({
         epicsCount: loadedEpics.length,
-        childrenCount: loadedEpics.reduce((total, epic) => total + epic.children.length, 0)
+        childrenCount: allChildWorkItems.length
       });
       
       setEpicImportStatus('success');
       // Call onImportComplete to update epics display, but mark as partial import to prevent modal
       // Note: The App component will handle deduplication when merging with existing epics
-      onImportComplete({ teamMembers: [], workItems: [], epics: loadedEpics, isPartialImport: true, pagination: paginationData || undefined });
+      onImportComplete({ 
+        teamMembers: [], 
+        workItems: allChildWorkItems, 
+        epics: loadedEpics, 
+        isPartialImport: true, 
+        pagination: paginationData || undefined 
+      });
       
       console.log(`✅ Epic import completed successfully with ${loadedEpics.length} epics`);
       
@@ -255,6 +285,7 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
 
     try {
       console.log(`🎫 Starting single epic import: ${epicKey}`);
+      console.log(`🔍 Making API call to /api/jira/epic-with-children`);
       
       const response = await fetch('/api/jira/epic-with-children', {
         method: 'POST',
@@ -267,9 +298,46 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
       }
       
       const epic: Epic = await response.json();
+      console.log(`📦 Received epic data:`, {
+        jiraId: epic.jiraId,
+        title: epic.title,
+        childrenCount: epic.children.length
+      });
       
-      // Call the onImportComplete with just the single epic
-      onImportComplete({ teamMembers: [], workItems: [], epics: [epic] });
+      // Extract children as work items to be saved to the database
+      console.log(`🔄 Extracting ${epic.children.length} children as work items...`);
+      const childWorkItems: WorkItem[] = epic.children.map(child => ({
+        id: child.id,
+        jiraId: child.jiraId,
+        title: child.title,
+        description: child.description,
+        estimateStoryPoints: child.estimateStoryPoints,
+        requiredCompletionDate: new Date(child.requiredCompletionDate),
+        requiredSkills: child.requiredSkills.filter((skill: string): skill is 'frontend' | 'backend' => 
+          skill === 'frontend' || skill === 'backend'
+        ),
+        dependencies: child.dependencies,
+        status: child.status,
+        jiraStatus: child.jiraStatus,
+        assignedSprints: child.assignedSprints,
+        epicId: epic.jiraId // Link children to the epic
+      }));
+      
+      console.log(`📝 Extracted ${childWorkItems.length} children as work items for epic ${epic.jiraId}`);
+      console.log(`🔍 Sample child work item:`, childWorkItems[0]);
+      
+      // Call the onImportComplete with the epic and its children as work items
+      console.log(`📞 Calling onImportComplete with:`, {
+        teamMembers: 0,
+        workItems: childWorkItems.length,
+        epics: 1
+      });
+      
+      onImportComplete({ 
+        teamMembers: [], 
+        workItems: childWorkItems, 
+        epics: [epic] 
+      });
       
       setSingleEpicImportStatus('success');
       setEpicKey(''); // Clear the input after successful import
@@ -303,11 +371,11 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
             value={projectKey}
             onChange={(e) => setProjectKey(e.target.value.toUpperCase())}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="REF"
+            placeholder="CW"
             disabled={isImporting}
           />
           <p className="text-sm text-gray-500 mt-1">
-            Enter the Jira project key (e.g., REF, DEV, PROJ)
+            Enter the Jira project key (e.g., CW, DEV, PROJ)
           </p>
         </div>
 
@@ -392,7 +460,7 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
               value={ticketKey}
               onChange={(e) => setTicketKey(e.target.value.toUpperCase())}
               className="w-full px-3 py-2 border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="REF-1234"
+              placeholder="CW-1234"
               disabled={isSingleImporting}
             />
           </div>
@@ -484,7 +552,7 @@ export const JiraImport: React.FC<JiraImportProps> = ({ onImportComplete }) => {
                 value={epicKey}
                 onChange={(e) => setEpicKey(e.target.value.toUpperCase())}
                 className="flex-1 px-3 py-2 border border-purple-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
-                placeholder="REF-1234"
+                placeholder="CW-1234"
                 disabled={isSingleEpicImporting}
               />
               <button

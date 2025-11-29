@@ -206,7 +206,7 @@ export const transformers = {
   workItemToApi: (item: any) => {
     // Validate and ensure required fields have proper values
     const title = item.title?.trim() || 'Untitled Work Item';
-    const estimateStoryPoints = Math.max(Number(item.estimateStoryPoints) || 1, 0.5);
+    const estimateStoryPoints = item.estimateStoryPoints === null ? null : Math.max(Number(item.estimateStoryPoints) || 1, 0.5);
     const requiredSkills = Array.isArray(item.requiredSkills) && item.requiredSkills.length > 0 
       ? item.requiredSkills 
       : ['frontend', 'backend']; // Default to both skills if none specified

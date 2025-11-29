@@ -366,6 +366,7 @@ function App() {
     try {
       console.log('🔄 Processing Jira import data...');
       console.log(`📊 Importing: ${importedData.teamMembers.length} team members, ${importedData.workItems.length} work items, ${importedData.epics?.length || 0} epics`);
+      console.log(`🔍 Work items details:`, importedData.workItems.map(wi => ({ jiraId: wi.jiraId, title: wi.title, epicId: wi.epicId })));
       
       // Check for duplicate team members by name (since Jira IDs are different format)
       const existingTeamMemberNames = new Set(data.teamMembers.map(tm => tm.name.toLowerCase()));
@@ -379,6 +380,12 @@ function App() {
       const newWorkItems = importedData.workItems.filter(wi => 
         !wi.jiraId || (!existingJiraIds.has(wi.jiraId) && !existingWorkItemTitles.has(wi.title.toLowerCase()))
       );
+      
+      console.log(`🔍 Filtered work items:`, {
+        total: importedData.workItems.length,
+        new: newWorkItems.length,
+        existing: importedData.workItems.length - newWorkItems.length
+      });
       
       const updateWorkItems = importedData.workItems.filter(wi => 
         wi.jiraId && existingJiraIds.has(wi.jiraId)
@@ -416,9 +423,10 @@ function App() {
       // Save new work items to database and get back the database IDs
       const savedWorkItems: WorkItem[] = [];
       if (isApiConnected) {
+        console.log(`💾 Starting to save ${newWorkItems.length} new work items to database...`);
         for (const workItem of newWorkItems) {
           try {
-            console.log(`💾 Saving work item to database: ${workItem.title}`);
+            console.log(`💾 Saving work item to database: ${workItem.jiraId} - ${workItem.title}`);
             console.log('📋 Work item data:', workItem);
             const apiData = transformers.workItemToApi(workItem);
             console.log('📡 Transformed API data:', apiData);
@@ -426,18 +434,18 @@ function App() {
             console.log('✅ Saved work item response:', savedItem);
             savedWorkItems.push(transformers.workItemFromApi(savedItem));
           } catch (error) {
-            console.error(`❌ Failed to save work item ${workItem.title}:`, error);
+            console.error(`❌ Failed to save work item ${workItem.jiraId} - ${workItem.title}:`, error);
             console.error('📋 Work item that failed:', workItem);
           }
         }
+        console.log(`✅ Completed saving work items. Saved: ${savedWorkItems.length}/${newWorkItems.length}`);
       } else {
         console.log('⚠️ API not connected, skipping work item database save');
       }
       
-      // Note: Epic children are NOT automatically saved to database during import
-      // They will only be saved when user manually clicks "Add to Work Items" in EpicsManagement
-      console.log(`📋 Epic import completed - epics and children are available for manual conversion to work items`);
-      const savedEpicChildren: WorkItem[] = []; // Empty array since we're not auto-saving children
+      // Epic children are now automatically included in importedData.workItems and processed above
+      console.log(`📋 Epic import completed - epics and children are processed as work items`);
+      const savedEpicChildren: WorkItem[] = []; // Legacy variable kept for compatibility
       
       // Update existing work items with fresh Jira data
       const updatedWorkItems: WorkItem[] = [];
@@ -454,7 +462,8 @@ function App() {
                 description: updateItem.description, // Update description from Jira
                 estimateStoryPoints: updateItem.estimateStoryPoints, // Update story points from Jira
                 jiraStatus: updateItem.jiraStatus, // Update Jira status
-                status: updateItem.status // Update simplified status mapping
+                status: updateItem.status, // Update simplified status mapping
+                epicId: updateItem.epicId // Update epic linkage from Jira
               };
               
               const apiData = transformers.workItemToApi(mergedItem);
@@ -569,7 +578,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          projectKey: 'REF', 
+          projectKey: 'CW', 
           limit: epicPagination.limit, 
           startAt: epicPagination.startAt + epicPagination.limit 
         })
